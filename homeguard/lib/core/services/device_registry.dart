@@ -54,6 +54,15 @@ class DeviceRegistry extends ChangeNotifier {
     return mode == DigestPassword.plain ? c : Credentials(c.username, mode.apply(c.password));
   }
 
+  /// The device whose stored account (and Digest password form) is used for
+  /// [deviceId]: itself, its recorder, or the NVR as fallback.
+  DeviceConfig? credentialOwner(String deviceId) {
+    final d = byId(deviceId);
+    if (d == null) return null;
+    final owner = d.parentId ?? d.id;
+    return byId(_creds.containsKey(owner) ? owner : 'nvr');
+  }
+
   /// A HomeGuard Bridge checks its own account as typed; the recorder itself
   /// may want the Digest form.
   Credentials? streamCredentialsFor(String deviceId, {required bool viaBridge}) =>

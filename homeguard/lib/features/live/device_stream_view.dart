@@ -106,12 +106,25 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
         final lapi = route.bridge || device.kind != DeviceKind.camera
             ? null
             : TvtLapiClient(host: route.host, port: route.httpPort, secure: route.secure, credentials: creds);
+        final owner = registry.credentialOwner(device.id);
         _access ??= VideoAccessCheck.instance.check(
           key: '${route.host}:${route.rtspPort}',
           rtspUri: route.rtspUri(path),
-          credentials: creds,
-          pictures: lapi,
+          plain: registry.credentialsFor(device.id)!,
+          form: route.bridge ? DigestPassword.plain : (owner?.digestPassword ?? DigestPassword.plain),
+          // Only learn a form for the device whose own account this is (a
+          // door station borrowing the NVR account must not change the NVR's).
+          tryOtherForms: !route.bridge && owner != null && owner.id == (device.parentId ?? device.id),
+          pictures: lapi == null
+              ? null
+              : (c) => TvtLapiClient(
+                  host: route.host,
+                  port: route.httpPort,
+                  secure: route.secure,
+                  credentials: c,
+                ),
           channel: device.channel,
+          onForm: (f) => registry.upsert(owner!.copyWith(digestPassword: f)),
         );
         return FutureBuilder<VideoAccess>(
           future: _access,
@@ -136,7 +149,9 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
               ),
               _ => _Placeholder(
                 icon: Icons.no_encryption_gmailerrorred_outlined,
-                text: 'The NVR refuses this login for video.\nDetails: Settings → Device diagnostics',
+                text: device.parentId == null && device.kind != DeviceKind.nvr
+                    ? '${device.name} refuses this login.\nSet its own username/password:\nSettings → ${device.name} → Credentials'
+                    : 'The NVR refuses this login for video.\nDetails: Settings → Device diagnostics',
                 onRetry: VideoAccessCheck.instance.reset,
               ),
             };

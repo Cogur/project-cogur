@@ -16,6 +16,7 @@ import 'package:homeguard/core/services/recording_service.dart';
 import 'package:homeguard/core/tvt/tvt_lapi_client.dart';
 import 'package:homeguard/core/tvt/tvt_net_client.dart';
 import 'package:homeguard/core/tvt/tvt_net_protocol.dart';
+import 'package:xml/xml.dart';
 
 import 'support/fake_tvt.dart';
 
@@ -105,6 +106,21 @@ void main() {
       RecordingService.playbackPath(cam, s),
       '/chID=2&date=2026-10-30&time=08:05:09&timelen=120&streamType=main&action=playback&linkType=tcp',
     );
+  });
+
+  test('segments are found in any envelope (config/item form of the HTTP API guide)', () {
+    final doc = XmlDocument.parse(
+      '<config version="1.0" xmlns="http://www.ipc.com/ver10" status="success">'
+      '<recData type="list" count="2">'
+      '<item><startTime type="string">2026-10-31 10:00:00</startTime><endTime type="string">2026-10-31 10:30:00</endTime>'
+      '<recType>motion</recType></item>'
+      '<item><startTime>2026-10-31 08:00:00</startTime><stopTime>2026-10-31 09:00:00</stopTime></item>'
+      '</recData></config>',
+    );
+    final segs = TvtLapiClient.parseSegments(doc, 4);
+    expect(segs.map((s) => s.start.hour), [8, 10]);
+    expect(segs.last.type, 'motion');
+    expect(segs.first.channel, 4);
   });
 
   test('LAN search uses the HTTP API and seeking keeps the segment end', () async {

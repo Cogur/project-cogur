@@ -91,8 +91,6 @@ class TvtLapiClient {
     return doc;
   }
 
-  static String _text(XmlElement e, String name) => e.findElements(name).firstOrNull?.innerText.trim() ?? '';
-
   /// API names the device advertises, e.g. `SearchByTime`, `GetSnapshot`.
   Future<Set<String>> supportedApis() async {
     if (_apis != null) return _apis!;
@@ -103,14 +101,40 @@ class TvtLapiClient {
     };
   }
 
+  /// Leaf values of the device info, whatever the envelope (`<DeviceInfo>`
+  /// or the `<config xmlns="http://www.ipc.com/ver10">` form).
   Future<Map<String, String>> deviceInfo() async {
     final doc = await _post('/System/DeviceInfo', '', '/GetDeviceInfo');
-    final root = doc.findAllElements('DeviceInfo').firstOrNull ?? doc.rootElement;
     return {
-      for (final e in root.childElements)
-        if (e.childElements.isEmpty) e.name.local: e.innerText.trim(),
+      for (final e in doc.rootElement.descendants.whereType<XmlElement>())
+        if (e.childElements.isEmpty && e.innerText.trim().isNotEmpty) e.name.local: e.innerText.trim(),
     };
   }
+
+  /// One request, never throwing: `HTTP 200: <first characters>` for
+  /// diagnostics of undocumented firmware.
+  Future<String> raw(String method, String path, [String body = '']) async {
+    try {
+      final res = await _http.send(
+        method,
+        _uri(path),
+        credentials: credentials,
+        body: body.isEmpty ? null : '<?xml version="1.0" encoding="utf-8"?>$body',
+        headers: const {'Content-Type': 'application/xml'},
+      );
+      final text = res.body.replaceAll(RegExp(r'\s+'), ' ');
+      return 'HTTP ${res.statusCode}: ${text.length > 300 ? '${text.substring(0, 300)}…' : text}';
+    } on DeviceHttpException catch (e) {
+      return e.message;
+    }
+  }
+
+  /// Body of the TVT HTTP API (IP media device guide v1.x) time search.
+  static String configSearchBody(DateTime from, DateTime to) =>
+      '<config version="1.0" xmlns="http://www.ipc.com/ver10"><search>'
+      '<starttime type="string"><![CDATA[${formatTime(from, isoT: false)}]]></starttime>'
+      '<endtime type="string"><![CDATA[${formatTime(to, isoT: false)}]]></endtime>'
+      '</search></config>';
 
   Future<TvtNatInfo> natInfo() async {
     XmlDocument doc;
@@ -166,33 +190,58 @@ class TvtLapiClient {
   }
 
   /// Recording segments of [channel] between [from] and [to].
+  /// Which request body the device accepted for time search (remembered).
+  int? _searchStyle;
+
   Future<List<RecordSegment>> searchByTime(int channel, DateTime from, DateTime to) async {
-    Future<XmlDocument> run(bool isoT) => _post(
-      '/Playback/SearchByTime',
-      '<SearchByTime><channelID>$channel</channelID>'
-          '<startTime>${formatTime(from, isoT: isoT)}</startTime>'
-          '<endTime>${formatTime(to, isoT: isoT)}</endTime></SearchByTime>',
-      '/SearchByTime/$channel',
-    );
-    XmlDocument doc;
-    try {
-      doc = await run(true);
-    } on DeviceHttpException catch (e) {
-      // Older documents use "YYYY-MM-DD hh:mm:ss".
-      Log.d('lapi', 'SearchByTime ISO form rejected ($e), retrying');
-      doc = await run(false);
+    String lapiBody(bool isoT) =>
+        '<SearchByTime><channelID>$channel</channelID>'
+        '<startTime>${formatTime(from, isoT: isoT)}</startTime>'
+        '<endTime>${formatTime(to, isoT: isoT)}</endTime></SearchByTime>';
+    final styles = <Future<XmlDocument> Function()>[
+      () => _post('/Playback/SearchByTime', lapiBody(true), '/SearchByTime/$channel'),
+      () => _post('/Playback/SearchByTime', configSearchBody(from, to), '/SearchByTime/$channel'),
+      () => _post('/Playback/SearchByTime', lapiBody(false), '/SearchByTime/$channel'),
+    ];
+    final order = [?_searchStyle, ...List.generate(styles.length, (i) => i)];
+    XmlDocument? doc;
+    DeviceHttpException? last;
+    for (final i in order.toSet()) {
+      try {
+        doc = await styles[i]();
+        _searchStyle = i;
+        break;
+      } on DeviceHttpException catch (e) {
+        // 400: wrong body form for this firmware; anything else is final.
+        if (e.statusCode != 400 && !e.message.contains('device status')) rethrow;
+        Log.d('lapi', 'SearchByTime form $i rejected ($e)');
+        last = e;
+      }
     }
+    if (doc == null) throw last ?? DeviceHttpException('Recording search failed');
+    return parseSegments(doc, channel);
+  }
+
+  /// Any element with start/end time children is a segment, whatever the
+  /// firmware calls the envelope (`RecordSegment`, `item`, …).
+  static List<RecordSegment> parseSegments(XmlDocument doc, int channel) {
+    String? child(XmlElement e, RegExp name) =>
+        e.childElements.where((c) => name.hasMatch(c.name.local)).firstOrNull?.innerText.trim();
+    final startName = RegExp(r'^start.?time$', caseSensitive: false);
+    final endName = RegExp(r'^(end|stop).?time$', caseSensitive: false);
     final out = <RecordSegment>[];
-    for (final e in doc.findAllElements('RecordSegment')) {
-      final s = _parseTime(_text(e, 'startTime'));
-      final end = _parseTime(_text(e, 'endTime'));
+    for (final e in doc.descendants.whereType<XmlElement>()) {
+      final s = _parseTime(child(e, startName) ?? '');
+      final end = _parseTime(child(e, endName) ?? '');
       if (s == null || end == null || !end.isAfter(s)) continue;
       out.add(
         RecordSegment(
-          channel: int.tryParse(_text(e, 'channelID')) ?? channel,
+          channel:
+              int.tryParse(child(e, RegExp(r'^(channelID|chl?id|channel)$', caseSensitive: false)) ?? '') ??
+              channel,
           start: s,
           end: end,
-          type: _text(e, 'recordType'),
+          type: child(e, RegExp(r'type$', caseSensitive: false)) ?? '',
         ),
       );
     }

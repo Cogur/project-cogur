@@ -71,11 +71,16 @@ class AccessControlPage extends StatelessWidget {
             ),
           const SizedBox(height: 16),
           if (targets.isEmpty)
-            const Card(
+            Card(
               child: ListTile(
-                leading: Icon(Icons.info_outline),
-                title: Text('No door relay configured'),
-                subtitle: Text('Settings → Front Door → set the unlock endpoint of your door station.'),
+                leading: const Icon(Icons.lock_open),
+                title: const Text('Set up door unlock'),
+                subtitle: Text(
+                  'Opens ${door?.name ?? 'the door station'} settings. Under "Door relay" choose '
+                  '"Unlock via": TVT protocol (experimental) or an HTTP/CGI request.',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: door == null ? null : () => context.push('/settings/device/${door.id}'),
               ),
             )
           else

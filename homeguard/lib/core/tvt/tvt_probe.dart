@@ -297,6 +297,20 @@ class TvtProbe {
       } catch (e) {
         out.add('HTTP API device info: $e');
       }
+      out.add('  raw device info: ${await lapi.raw('POST', '/GetDeviceInfo')}');
+      final now = DateTime.now();
+      final day = DateTime(now.year, now.month, now.day);
+      final end = day.add(const Duration(hours: 23, minutes: 59, seconds: 59));
+      String t(DateTime d, bool iso) => TvtLapiClient.formatTime(d, isoT: iso);
+      final searches = {
+        'SearchByTime ISO':
+            '<SearchByTime><channelID>1</channelID><startTime>${t(day, true)}</startTime>'
+            '<endTime>${t(end, true)}</endTime></SearchByTime>',
+        'config/search': TvtLapiClient.configSearchBody(day, end),
+      };
+      for (final e in searches.entries) {
+        out.add('  raw ${e.key}: ${await lapi.raw('POST', '/SearchByTime/1', e.value)}');
+      }
       try {
         final jpeg = await lapi.snapshot(1);
         out.add('HTTP API snapshot (camera 1): OK, ${jpeg.length ~/ 1024} kB');
