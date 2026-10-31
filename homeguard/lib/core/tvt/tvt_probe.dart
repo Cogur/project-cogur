@@ -81,57 +81,64 @@ class TvtProbe {
   /// live/stream/preview commands. Read-only.
   Future<void> _scanWebUi(String host, int port, List<String> out) async {
     final client = http.Client();
+    final root = Uri(scheme: 'http', host: host, port: port, path: '/');
     try {
-      Future<String?> get(String path) async {
+      Future<String?> get(Uri uri) async {
         try {
-          final res = await client
-              .get(Uri(scheme: 'http', host: host, port: port, path: path))
-              .timeout(timeout * 3);
-          if (res.statusCode != 200 || res.bodyBytes.length > 4 * 1024 * 1024) return null;
+          final res = await client.get(uri).timeout(timeout * 3);
+          if (res.statusCode != 200 || res.bodyBytes.length > 6 * 1024 * 1024) return null;
           return utf8.decode(res.bodyBytes, allowMalformed: true);
         } catch (_) {
           return null;
         }
       }
 
-      final index = await get('/') ?? '';
-      final scripts = <String>{
-        for (final m in RegExp(r'''(?:src|data-main)\s*=\s*["']([^"']+)["']''').allMatches(index))
-          if (m[1]!.contains('.js') || !m[1]!.contains('.')) m[1]!.split('?').first,
-      };
+      // Pages and scripts referenced from the start page, resolved like a
+      // browser would (relative paths, redirects via meta/JS location).
+      final refPattern = RegExp(r"""["'(]([A-Za-z0-9_./~-]+\.(?:js|html?)(?:\?[^"')\s]*)?)["')]""");
+      final seen = <String>{};
+      final queue = <Uri>[root];
+      final files = <String>[];
       final snippets = <String>{};
       final commands = <String>{};
-      var scanned = 0;
-      final queue = scripts.toList();
-      while (queue.isNotEmpty && scanned < 40) {
-        var path = queue.removeAt(0);
-        if (!path.startsWith('/')) path = '/$path';
-        if (!path.endsWith('.js')) path = '$path.js';
-        final js = await get(path);
-        if (js == null) continue;
-        scanned++;
-        for (final m in RegExp(r'(?:new WebSocket|wss?://|websocket)', caseSensitive: false).allMatches(js)) {
+      while (queue.isNotEmpty && files.length < 60) {
+        final uri = queue.removeAt(0);
+        final key = uri.path;
+        if (!seen.add(key)) continue;
+        final text = await get(uri);
+        if (text == null) continue;
+        files.add('$key (${(text.length / 1024).toStringAsFixed(0)} kB)');
+        for (final m in RegExp(
+          r'(?:new WebSocket|wss?://|websocket)',
+          caseSensitive: false,
+        ).allMatches(text)) {
           if (snippets.length >= 15) break;
-          final a = (m.start - 60).clamp(0, js.length);
-          final b = (m.end + 90).clamp(0, js.length);
-          snippets.add('$path: ${js.substring(a, b).replaceAll(RegExp(r'\s+'), ' ')}');
+          final a = (m.start - 60).clamp(0, text.length);
+          final b = (m.end + 90).clamp(0, text.length);
+          snippets.add('$key: ${text.substring(a, b).replaceAll(RegExp(r'\s+'), ' ')}');
         }
-        for (final m in RegExp(r'''url\s*:\s*["']([A-Za-z0-9_/.]+)["']''').allMatches(js)) {
+        for (final m in RegExp(r"""url\s*:\s*["']([A-Za-z0-9_/.]+)["']""").allMatches(text)) {
           final c = m[1]!;
           if (RegExp('live|stream|preview|play|socket|snap|jpeg|pic', caseSensitive: false).hasMatch(c)) {
             commands.add(c);
           }
         }
-        // Follow other scripts the loader references (require.js style).
-        for (final m in RegExp(r'''["']((?:/?[A-Za-z0-9_-]+/)+[A-Za-z0-9_.-]+\.js)["']''').allMatches(js)) {
-          final next = m[1]!;
-          if (queue.length < 80 && !scripts.contains(next)) {
-            scripts.add(next);
-            queue.add(next);
+        for (final m in refPattern.allMatches(text)) {
+          final ref = m[1]!;
+          if (ref.startsWith('//')) continue;
+          final next = uri.resolve(ref);
+          if (next.host == host && next.port == port && !seen.contains(next.path) && queue.length < 120) {
+            queue.add(next.replace(query: ''));
           }
         }
+        // require.js data-main without extension
+        for (final m in RegExp(r"""data-main\s*=\s*["']([^"']+)["']""").allMatches(text)) {
+          final ref = m[1]!;
+          queue.add(uri.resolve(ref.endsWith('.js') ? ref : '$ref.js'));
+        }
       }
-      out.add('Web UI scan: $scanned scripts');
+      out.add('Web UI scan: ${files.length} files');
+      out.add('  files: ${files.take(25).join(', ')}${files.length > 25 ? ', …' : ''}');
       if (commands.isNotEmpty) {
         out.add('  live-related commands: ${(commands.toList()..sort()).take(40).join(', ')}');
       }

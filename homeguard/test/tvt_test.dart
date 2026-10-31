@@ -163,9 +163,11 @@ void main() {
     addTearDown(() => server.close(force: true));
     server.listen((req) async {
       final files = {
-        '/': '<html><script data-main="js/main" src="/js/require.js"></script></html>',
+        '/': '<html><script>location.href="./page/index.html"</script></html>',
+        '/page/index.html': '<script data-main="../js/main" src="../js/require.js"></script>',
         '/js/require.js': '/* loader */',
-        '/js/main.js': 'define(["js/app/live/preview.js"],function(){})',
+        '/js/main.js': 'define(["app/live/preview.js"],function(){})',
+        '/js/app/live/preview.js.unused': '',
         '/js/app/live/preview.js': 'var s=new WebSocket("ws://"+location.host+"/requestWebsocketConnection");Communication.Request({url:"queryLiveStream",data:x})',
       };
       final body = files[req.uri.path];
@@ -176,7 +178,8 @@ void main() {
     final out = await TvtProbe(timeout: const Duration(milliseconds: 300))
         .run('127.0.0.1', const Credentials('admin', 'x'), httpPort: server.port, rtspPort: 1);
     final report = out.join('\n');
-    expect(report, contains('Web UI scan: 3 scripts'));
+    expect(report, contains('Web UI scan: 5 files'));
+    expect(report, contains('/js/app/live/preview.js'));
     expect(report, contains('queryLiveStream'));
     expect(report, contains('requestWebsocketConnection'));
   });
