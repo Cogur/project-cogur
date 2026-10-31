@@ -349,6 +349,23 @@ void main() {
       expect(registry.videoDevices.map((d) => d.id), isNot(contains('cam2')));
     });
 
+    test('firmware wanting the MD5 password form in Digest is detected and remembered', () async {
+      setup.web = true;
+      goodPassword = DigestPassword.md5Upper.apply('pw');
+      final auth = build();
+      await auth.init();
+      await signIn(auth);
+      expect(auth.takeNotice(), isNull);
+      expect(registry.byId('nvr')!.digestPassword, DigestPassword.md5Upper);
+      expect(registry.mediaCredentialsFor('cam2')!.password, goodPassword);
+      expect(registry.credentialsFor('cam2')!.password, 'pw'); // web/TVT logins keep the plain one
+      expect(registry.streamCredentialsFor('cam2', viaBridge: true)!.password, 'pw');
+      // Next sign-in starts with the remembered form: one RTSP attempt, no refusal.
+      verified.clear();
+      await signIn(auth);
+      expect(verified, hasLength(1));
+    });
+
     test('RTSP refusing a password the web login accepted still signs in, with a notice', () async {
       setup.web = true;
       goodPassword = 'something-else'; // RTSP relay rejects the account

@@ -41,6 +41,24 @@ class DeviceRegistry extends ChangeNotifier {
     return _creds[owner] ?? _creds['nvr'];
   }
 
+  /// Credentials for RTSP and device HTTP (Digest) calls: the password in the
+  /// form the owning device expects (see [DigestPassword]).
+  Credentials? mediaCredentialsFor(String deviceId) {
+    final d = byId(deviceId);
+    if (d == null) return null;
+    final owner = d.parentId ?? d.id;
+    final ownerId = _creds.containsKey(owner) ? owner : 'nvr';
+    final c = _creds[ownerId];
+    if (c == null) return null;
+    final mode = byId(ownerId)?.digestPassword ?? DigestPassword.plain;
+    return mode == DigestPassword.plain ? c : Credentials(c.username, mode.apply(c.password));
+  }
+
+  /// A HomeGuard Bridge checks its own account as typed; the recorder itself
+  /// may want the Digest form.
+  Credentials? streamCredentialsFor(String deviceId, {required bool viaBridge}) =>
+      viaBridge ? credentialsFor(deviceId) : mediaCredentialsFor(deviceId);
+
   bool hasOwnCredentials(String deviceId) => _creds.containsKey(deviceId);
 
   Future<void> setCredentials(String deviceId, Credentials? c) async {

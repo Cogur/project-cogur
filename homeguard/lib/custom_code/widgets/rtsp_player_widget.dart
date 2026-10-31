@@ -188,6 +188,9 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     final delay = Duration(milliseconds: min(30000, 1000 * pow(2, _attempt - 1).toInt()));
     _setStatus(RtspPlayerStatus.error, message);
     _retryTimer?.cancel();
+    // A refused login is not retried on its own: recorders count (and beep
+    // on) every failed attempt. The user can still tap "Retry now".
+    if (message == 'Authentication failed') return;
     _retryTimer = Timer(delay, () async {
       await _player.stop();
       _open();

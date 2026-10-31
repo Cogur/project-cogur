@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../models/device.dart';
 import '../rtsp/rtsp_client.dart';
 import '../security/secure_store.dart';
 import 'tvt_lapi_client.dart';
@@ -51,29 +52,54 @@ class TvtProbe {
     '/profile1',
   ];
 
-  Future<void> _probeRtsp(String host, int port, Credentials creds, List<String> out) async {
+  /// Returns the password form RTSP accepted, or null. On a refusal it tries
+  /// the MD5 forms once each and then stops: every refused attempt is an
+  /// "illegal login" on the recorder (it may beep or lock the account).
+  Future<DigestPassword?> _probeRtsp(String host, int port, Credentials creds, List<String> out) async {
+    var form = DigestPassword.plain;
+    Future<RtspProbeResult> probe(String path, DigestPassword f) => RtspClient.probe(
+      uri: Uri.parse('rtsp://$host:$port$path'),
+      username: creds.username,
+      password: f.apply(creds.password),
+      timeout: const Duration(seconds: 4),
+      backchannel: false,
+    );
     for (final path in rtspPaths) {
       try {
-        final r = await RtspClient.probe(
-          uri: Uri.parse('rtsp://$host:$port$path'),
-          username: creds.username,
-          password: creds.password,
-          timeout: const Duration(seconds: 4),
-          backchannel: false,
-        );
+        RtspProbeResult r;
+        try {
+          r = await probe(path, form);
+        } on RtspException catch (e) {
+          if (!e.isAuthFailure || path != rtspPaths.first) rethrow;
+          out.add('RTSP $path: ${e.message}${e.detail == null ? '' : ' (${e.detail})'}');
+          RtspProbeResult? found;
+          for (final f in [DigestPassword.md5Upper, DigestPassword.md5Lower]) {
+            try {
+              found = await probe(path, f);
+              form = f;
+              break;
+            } on RtspException catch (e2) {
+              out.add('  with ${f.name} password form: ${e2.message}');
+              if (!e2.isAuthFailure) break;
+            }
+          }
+          if (found == null) {
+            out.add('  stopped probing to avoid locking the account');
+            return null;
+          }
+          r = found;
+        }
         out.add(
-          'RTSP $path: OK, video ${r.videoCodec}, audio ${r.audioCodec}${r.server == null ? '' : ', server ${r.server}'}',
+          'RTSP $path${form == DigestPassword.plain ? '' : ' (${form.name} password form)'}: OK, '
+          'video ${r.videoCodec}, audio ${r.audioCodec}${r.server == null ? '' : ', server ${r.server}'}',
         );
-        // Report main too when sub works, but no further variants.
-        if (path.contains('streamType=main') || path == rtspPaths[1]) return;
+        if (path.contains('streamType=main') || path == rtspPaths[1]) return form;
       } on RtspException catch (e) {
         out.add('RTSP $path: ${e.message}${e.detail == null ? '' : ' (${e.detail})'}');
-        if (e.isAuthFailure) {
-          out.add('  stopped probing to avoid locking the account');
-          return;
-        }
+        if (e.isAuthFailure) return null;
       }
     }
+    return form;
   }
 
   /// Reads the recorder's own web UI scripts (public static files) and lists
@@ -207,7 +233,8 @@ class TvtProbe {
       }
     }
 
-    if (creds != null && await _open(host, rtspPort)) await _probeRtsp(host, rtspPort, creds, out);
+    DigestPassword? form;
+    if (creds != null && await _open(host, rtspPort)) form = await _probeRtsp(host, rtspPort, creds, out);
 
     if (open.contains(httpPort) && creds != null) {
       final web = TvtWebClient(
@@ -246,7 +273,11 @@ class TvtProbe {
 
       await _scanWebUi(host, httpPort, out);
 
-      final lapi = TvtLapiClient(host: host, port: httpPort, credentials: creds);
+      final lapi = TvtLapiClient(
+        host: host,
+        port: httpPort,
+        credentials: Credentials(creds.username, (form ?? DigestPassword.plain).apply(creds.password)),
+      );
       try {
         final apis = (await lapi.supportedApis()).toList()..sort();
         out.add('HTTP API: ${apis.length} commands');

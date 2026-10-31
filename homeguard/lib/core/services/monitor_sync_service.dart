@@ -41,7 +41,7 @@ class MonitorSyncService {
       throw DeviceHttpException('No event index path configured for the indoor monitor');
     }
     final route = await _connections.require(deviceId);
-    final creds = _registry.credentialsFor(deviceId);
+    final creds = _registry.mediaCredentialsFor(deviceId);
     final indexUri = route.httpUri(device.eventIndexPath);
     final index = await _http.send('GET', indexUri, credentials: creds);
     final entries = parseIndex(index.body);

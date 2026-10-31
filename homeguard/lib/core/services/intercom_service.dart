@@ -50,8 +50,8 @@ class IntercomService extends ChangeNotifier {
       final route = await _connections.require(deviceId);
       final client = RtspClient(
         uri: route.rtspUri(route.streamPath(device, StreamQuality.main)),
-        username: _registry.credentialsFor(deviceId)?.username ?? '',
-        password: _registry.credentialsFor(deviceId)?.password ?? '',
+        username: _registry.mediaCredentialsFor(deviceId)?.username ?? '',
+        password: _registry.mediaCredentialsFor(deviceId)?.password ?? '',
       );
       _client = client;
       await client.connect();

@@ -48,6 +48,8 @@ class DoorRelayService {
 
     try {
       final route = await _connections.require(deviceId);
+      // Plain account for the bridge and the TVT protocol (they hash it
+      // themselves); Digest form for direct HTTP calls.
       final creds = _registry.credentialsFor(deviceId);
       final hold = Duration(milliseconds: device.unlockHoldMs.clamp(200, 10000));
       if (route.bridge) {
@@ -65,7 +67,7 @@ class DoorRelayService {
         await _http.send(
           device.unlockMethod,
           route.httpUri(device.unlockPath),
-          credentials: creds,
+          credentials: _registry.mediaCredentialsFor(deviceId),
           body: device.unlockBody,
           headers: device.unlockBody.trimLeft().startsWith('{')
               ? const {'Content-Type': 'application/json'}

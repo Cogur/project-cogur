@@ -1,3 +1,7 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+
 /// Device kinds in a Techson / TVT-style installation.
 enum DeviceKind {
   /// Network video recorder (e.g. TCR I12 S04-NS). Owns the camera channels.
@@ -34,6 +38,20 @@ enum RemoteMode {
 
 enum StreamQuality { main, sub }
 
+/// What some TVT firmware expects as the "password" in RTSP/HTTP Digest:
+/// the plain password, or the MD5 hex its web login also uses.
+enum DigestPassword {
+  plain,
+  md5Upper,
+  md5Lower;
+
+  String apply(String password) => switch (this) {
+    plain => password,
+    md5Upper => md5.convert(utf8.encode(password)).toString().toUpperCase(),
+    md5Lower => md5.convert(utf8.encode(password)).toString(),
+  };
+}
+
 /// How the door relay is fired.
 enum UnlockMethod {
   /// HTTP/CGI request to [DeviceConfig.unlockPath] (most OEM intercoms).
@@ -67,6 +85,7 @@ class DeviceConfig {
     this.alarmOutput = 0,
     this.unlockHoldMs = 1000,
     this.netPort = 9008,
+    this.digestPassword = DigestPassword.plain,
     this.eventIndexPath = '',
     this.supportsTalk = false,
     this.enabled = true,
@@ -107,6 +126,9 @@ class DeviceConfig {
   /// TVT device protocol port: 9008 on cameras/intercoms, 6036 on recorders.
   final int netPort;
 
+  /// Password form for RTSP/HTTP Digest on this device (detected at sign-in).
+  final DigestPassword digestPassword;
+
   /// HTTP path on the indoor monitor that lists stored snapshots.
   final String eventIndexPath;
   final bool supportsTalk;
@@ -142,6 +164,7 @@ class DeviceConfig {
     int? alarmOutput,
     int? unlockHoldMs,
     int? netPort,
+    DigestPassword? digestPassword,
     String? eventIndexPath,
     bool? supportsTalk,
     bool? enabled,
@@ -166,6 +189,7 @@ class DeviceConfig {
     alarmOutput: alarmOutput ?? this.alarmOutput,
     unlockHoldMs: unlockHoldMs ?? this.unlockHoldMs,
     netPort: netPort ?? this.netPort,
+    digestPassword: digestPassword ?? this.digestPassword,
     eventIndexPath: eventIndexPath ?? this.eventIndexPath,
     supportsTalk: supportsTalk ?? this.supportsTalk,
     enabled: enabled ?? this.enabled,
@@ -192,6 +216,7 @@ class DeviceConfig {
     'alarmOutput': alarmOutput,
     'unlockHoldMs': unlockHoldMs,
     'netPort': netPort,
+    'digestPassword': digestPassword.name,
     'eventIndexPath': eventIndexPath,
     'supportsTalk': supportsTalk,
     'enabled': enabled,
@@ -218,6 +243,7 @@ class DeviceConfig {
     alarmOutput: j['alarmOutput'] as int? ?? 0,
     unlockHoldMs: j['unlockHoldMs'] as int? ?? 1000,
     netPort: j['netPort'] as int? ?? 9008,
+    digestPassword: DigestPassword.values.asNameMap()[j['digestPassword']] ?? DigestPassword.plain,
     eventIndexPath: j['eventIndexPath'] as String? ?? '',
     supportsTalk: j['supportsTalk'] as bool? ?? false,
     enabled: j['enabled'] as bool? ?? true,

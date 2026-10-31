@@ -6,11 +6,12 @@ import 'package:provider/provider.dart';
 
 import '../../core/models/device.dart';
 import '../../core/network/connection_manager.dart';
-import '../../core/rtsp/rtsp_client.dart';
+import '../../core/network/device_http_client.dart';
 import '../../core/services/device_registry.dart';
 import '../../core/tvt/tvt_lapi_client.dart';
 import '../../custom_code/widgets/rtsp_player_widget.dart';
 import '../../theme/app_theme.dart';
+import 'video_access.dart';
 
 /// Resolves a device to its best route (LAN → remote) and hosts the RTSP
 /// player. Re-resolves when the network changes.
@@ -40,44 +41,16 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
   Future<ResolvedRoute>? _route;
   ConnectionManager? _connections;
 
-  /// Some TVT recorders reject valid passwords on RTSP (401) while their HTTP
-  /// API accepts them; then the tile shows refreshed snapshots instead.
-  bool _snapshotMode = false;
-  int _authFailures = 0;
+  Future<VideoAccess>? _access;
 
-  bool _classified = false;
-
-  void _onPlayerStatus(RtspPlayerStatus s, String? message) {
-    if (s == RtspPlayerStatus.playing) _authFailures = 0;
-    if (s != RtspPlayerStatus.error || _snapshotMode) return;
-    if (message == 'Authentication failed' && ++_authFailures >= 2) {
-      setState(() => _snapshotMode = true);
-    } else if (!_classified) {
-      // libmpv often reports only "failed to recognize file format"; ask the
-      // device ourselves (once per tile) whether it refused the password.
-      _classified = true;
-      unawaited(_classify());
-    }
+  void _onAccessReset() {
+    if (mounted) setState(() => _access = null);
   }
 
-  Future<void> _classify() async {
-    final registry = context.read<DeviceRegistry>();
-    final device = registry.byId(widget.deviceId);
-    final creds = registry.credentialsFor(widget.deviceId);
-    final route = await _route;
-    if (device == null || creds == null || route == null || !route.reachable) return;
-    try {
-      await RtspClient.probe(
-        uri: route.rtspUri(route.streamPath(device, widget.quality)),
-        username: creds.username,
-        password: creds.password,
-        backchannel: false,
-      );
-    } on RtspException catch (e) {
-      if (e.isAuthFailure && mounted) setState(() => _snapshotMode = true);
-    } catch (_) {
-      // Network trouble: the player keeps retrying on its own.
-    }
+  @override
+  void initState() {
+    super.initState();
+    VideoAccessCheck.instance.generation.addListener(_onAccessReset);
   }
 
   @override
@@ -102,6 +75,7 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
 
   @override
   void dispose() {
+    VideoAccessCheck.instance.generation.removeListener(_onAccessReset);
     _connections?.removeListener(_onNetwork);
     super.dispose();
   }
@@ -126,40 +100,54 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
             onRetry: () => _resolve(force: true),
           );
         }
-        final creds = registry.credentialsFor(device.id);
-        final url = route.rtspUrl(route.streamPath(device, widget.quality), creds);
-        final snapshots = _snapshotMode && !route.bridge && device.kind == DeviceKind.camera && creds != null;
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            if (snapshots)
-              _SnapshotView(
-                key: ValueKey('snap-${widget.deviceId}-${route.host}'),
-                client: TvtLapiClient(
-                  host: route.host,
-                  port: route.httpPort,
-                  secure: route.secure,
-                  credentials: creds,
-                ),
-                channel: device.channel,
-                fit: widget.fit,
-                onRetryVideo: () => setState(() {
-                  _snapshotMode = false;
-                  _authFailures = 0;
-                  _classified = false;
-                }),
-              )
-            else
-              RtspPlayerWidget(
+        final creds = registry.streamCredentialsFor(device.id, viaBridge: route.bridge);
+        if (creds == null) return const _Placeholder(icon: Icons.lock_outline, text: 'Not signed in');
+        final path = route.streamPath(device, widget.quality);
+        final lapi = route.bridge || device.kind != DeviceKind.camera
+            ? null
+            : TvtLapiClient(host: route.host, port: route.httpPort, secure: route.secure, credentials: creds);
+        _access ??= VideoAccessCheck.instance.check(
+          key: '${route.host}:${route.rtspPort}',
+          rtspUri: route.rtspUri(path),
+          credentials: creds,
+          pictures: lapi,
+          channel: device.channel,
+        );
+        return FutureBuilder<VideoAccess>(
+          future: _access,
+          builder: (context, access) {
+            if (access.connectionState != ConnectionState.done) {
+              return const _Placeholder(icon: Icons.radar, text: 'Connecting…', busy: true);
+            }
+            final Widget content = switch (access.data ?? VideoAccess.video) {
+              VideoAccess.video => RtspPlayerWidget(
                 key: ValueKey('${widget.deviceId}-${widget.quality.name}-${route.host}'),
-                rtspUrl: url,
+                rtspUrl: route.rtspUrl(path, creds),
                 muted: widget.muted,
                 fit: widget.fit,
                 playerTag: widget.playerTag,
-                onStatusChanged: _onPlayerStatus,
               ),
-            if (widget.showRouteBadge) Positioned(top: 8, right: 8, child: RouteBadge(route: route)),
-          ],
+              VideoAccess.pictures when lapi != null => _SnapshotView(
+                key: ValueKey('snap-${widget.deviceId}-${route.host}'),
+                client: lapi,
+                channel: device.channel,
+                fit: widget.fit,
+                onRetryVideo: VideoAccessCheck.instance.reset,
+              ),
+              _ => _Placeholder(
+                icon: Icons.no_encryption_gmailerrorred_outlined,
+                text: 'The NVR refuses this login for video.\nDetails: Settings → Device diagnostics',
+                onRetry: VideoAccessCheck.instance.reset,
+              ),
+            };
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                content,
+                if (widget.showRouteBadge) Positioned(top: 8, right: 8, child: RouteBadge(route: route)),
+              ],
+            );
+          },
         );
       },
     );
@@ -220,7 +208,11 @@ class _Placeholder extends StatelessWidget {
               ? const SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2))
               : Icon(icon, color: Colors.white54),
           const SizedBox(height: 8),
-          Text(text, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white60, fontSize: 12),
+          ),
           if (onRetry != null) TextButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
@@ -267,6 +259,12 @@ class _SnapshotViewState extends State<_SnapshotView> {
           _jpeg = jpeg;
           _error = null;
         });
+      } on DeviceHttpException catch (e) {
+        if (!mounted) return;
+        setState(() => _error = '$e');
+        // Refused login: stop, every attempt counts as an illegal login.
+        if (e.statusCode == 401 || e.statusCode == 403) return;
+        await Future<void>.delayed(const Duration(seconds: 4));
       } catch (e) {
         if (!mounted) return;
         setState(() => _error = '$e');

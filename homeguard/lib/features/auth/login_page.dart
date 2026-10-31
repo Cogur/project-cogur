@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/models/device.dart';
 import '../../theme/app_theme.dart';
+import '../live/video_access.dart';
 import 'auth_controller.dart';
 
 class LoginPage extends StatefulWidget {
@@ -83,6 +84,7 @@ class _LoginPageState extends State<LoginPage> {
         allowEnableRtsp: allowEnableRtsp,
         webPort: int.tryParse(_webPort.text.trim()),
       );
+      VideoAccessCheck.instance.reset();
       final notice = auth.takeNotice();
       if (notice != null) {
         messenger.showSnackBar(SnackBar(content: Text(notice), duration: const Duration(seconds: 8)));

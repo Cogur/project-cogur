@@ -79,7 +79,7 @@ class RecordingService {
   }
 
   Credentials _creds(DeviceConfig d) {
-    final c = _registry.credentialsFor(d.id);
+    final c = _registry.mediaCredentialsFor(d.id);
     if (c == null) throw RecordingException('Not signed in');
     return c;
   }
@@ -96,7 +96,7 @@ class RecordingService {
       final bridge = BridgeClient(
         host: route.host,
         port: route.httpPort,
-        credentials: _creds(recorder),
+        credentials: _registry.credentialsFor(recorder.id) ?? (throw RecordingException('Not signed in')),
         http: _http,
       );
       try {
@@ -138,7 +138,9 @@ class RecordingService {
     final camera = _registry.byId(cameraId)!;
     final recorder = camera.parentId == null ? camera : _registry.byId(camera.parentId!)!;
     final route = await _connections.require(cameraId);
-    final c = _creds(recorder);
+    // The web login hashes the password itself: plain credentials here.
+    final c = _registry.credentialsFor(recorder.id);
+    if (c == null) throw RecordingException('Not signed in');
     final web = TvtWebClient(
       host: route.host,
       port: route.httpPort,

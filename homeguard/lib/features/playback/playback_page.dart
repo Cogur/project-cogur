@@ -253,7 +253,10 @@ class _Player extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final registry = context.read<DeviceRegistry>();
-    final url = recording.route.rtspUrl(recording.path, registry.credentialsFor(recording.device.id));
+    final url = recording.route.rtspUrl(
+      recording.path,
+      registry.streamCredentialsFor(recording.device.id, viaBridge: recording.route.bridge),
+    );
     return Column(
       children: [
         AspectRatio(

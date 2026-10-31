@@ -232,18 +232,29 @@ class AuthController extends ChangeNotifier {
       (d) => d.parentId == nvr.id && d.enabled,
       orElse: () => nvr,
     );
+    final storedForm = _registry.byId(nvr.id)!.digestPassword;
     try {
-      await _verify(route.rtspUri(route.streamPath(firstCamera, StreamQuality.sub)), creds);
+      await _verify(
+        route.rtspUri(route.streamPath(firstCamera, StreamQuality.sub)),
+        Credentials(creds.username, storedForm.apply(creds.password)),
+      );
       if (setup?.rtspWasEnabled ?? false) _notice = 'The NVR\'s video service was switched on.';
     } on RtspException catch (e) {
       final detail = e.detail == null ? '' : '\n\nNVR replied: ${e.detail}';
       if (setup != null && e.isAuthFailure) {
-        // The web login already proved the password. Some TVT firmware
-        // rejects valid accounts on its RTSP relay; let the user in and say so.
-        Log.w('auth', 'web login ok but RTSP refused: ${e.detail ?? e.message}');
-        _notice =
-            'Signed in. The NVR accepted the password but its video service refused it, so live view may not '
-            'start. Check the user\'s "Remote preview" permission on the NVR.$detail';
+        // The web login already proved the password. Some TVT firmware wants
+        // the MD5 form in Digest; try those once each (every refusal counts
+        // as an illegal login on the recorder), else let the user in anyway.
+        final variant = await _detectDigestVariant(route, firstCamera, creds, tried: storedForm);
+        if (variant != null) {
+          await _registry.upsert(_registry.byId(nvr.id)!.copyWith(digestPassword: variant));
+          Log.w('auth', 'RTSP accepts the ${variant.name} password form');
+        } else {
+          Log.w('auth', 'web login ok but RTSP refused: ${e.detail ?? e.message}');
+          _notice =
+              'Signed in. The NVR accepted the password but its video service refused it, so live view may '
+              'not start. Check the user\'s "Remote preview" permission on the NVR.$detail';
+        }
       } else if (e.statusCode == 401) {
         _registerFailure();
         throw LoginException(
@@ -273,6 +284,26 @@ class AuthController extends ChangeNotifier {
     Log.w('auth', 'signed in via ${route.kind.name}');
     _status = AuthStatus.authenticated;
     notifyListeners();
+  }
+
+  Future<DigestPassword?> _detectDigestVariant(
+    ResolvedRoute route,
+    DeviceConfig cam,
+    Credentials c, {
+    required DigestPassword tried,
+  }) async {
+    for (final v in DigestPassword.values.where((v) => v != tried)) {
+      try {
+        await _verify(
+          route.rtspUri(route.streamPath(cam, StreamQuality.sub)),
+          Credentials(c.username, v.apply(c.password)),
+        );
+        return v;
+      } on RtspException catch (e) {
+        if (!e.isAuthFailure) return null;
+      }
+    }
+    return null;
   }
 
   /// Mirrors the NVR's channel list (names, count) into the topology, the way
