@@ -90,6 +90,15 @@ class SettingsPage extends StatelessWidget {
             value: settings.confirmUnlockWithBiometrics,
             onChanged: (v) => settings.update(confirmUnlockWithBiometrics: v),
           ),
+          SwitchListTile(
+            secondary: const Icon(Icons.screenshot_outlined),
+            title: const Text('Allow screenshots'),
+            subtitle: const Text(
+              'Off keeps camera pictures out of screenshots, screen recordings and recent apps',
+            ),
+            value: settings.allowScreenshots,
+            onChanged: (v) => settings.update(allowScreenshots: v),
+          ),
           ListTile(
             leading: const Icon(Icons.logout),
             title: const Text('Sign out'),

@@ -21,7 +21,13 @@ class DeviceRegistry extends ChangeNotifier {
   bool get loaded => _devices.isNotEmpty;
 
   Future<void> load() async {
-    _devices = await _store.readDevices() ?? DeviceConfig.defaultTopology();
+    _devices = [
+      for (final d in await _store.readDevices() ?? DeviceConfig.defaultTopology())
+        // Migrate the old door-station guess to the path TVT intercoms serve.
+        d.kind == DeviceKind.doorStation && d.rtspPathTemplate == DeviceConfig.legacyDoorTemplate
+            ? d.copyWith(rtspPathTemplate: DeviceConfig.doorStationTemplate)
+            : d,
+    ];
     _creds.clear();
     for (final d in _devices.where((d) => d.parentId == null)) {
       final c = await _store.readCredentials(d.id);
@@ -50,17 +56,10 @@ class DeviceRegistry extends ChangeNotifier {
     final ownerId = _creds.containsKey(owner) ? owner : 'nvr';
     final c = _creds[ownerId];
     if (c == null) return null;
-    final mode = byId(ownerId)?.digestPassword ?? DigestPassword.plain;
+    // The form belongs to the device being contacted (a door station that
+    // borrows the NVR account may still want the plain password).
+    final mode = byId(owner)?.digestPassword ?? DigestPassword.plain;
     return mode == DigestPassword.plain ? c : Credentials(c.username, mode.apply(c.password));
-  }
-
-  /// The device whose stored account (and Digest password form) is used for
-  /// [deviceId]: itself, its recorder, or the NVR as fallback.
-  DeviceConfig? credentialOwner(String deviceId) {
-    final d = byId(deviceId);
-    if (d == null) return null;
-    final owner = d.parentId ?? d.id;
-    return byId(_creds.containsKey(owner) ? owner : 'nvr');
   }
 
   /// A HomeGuard Bridge checks its own account as typed; the recorder itself

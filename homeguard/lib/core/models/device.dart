@@ -95,6 +95,12 @@ class DeviceConfig {
   /// `{channel}` is 1-based, `{stream}` is `main` or `sub`.
   static const tvtRtspTemplate = '/chID={channel}&streamType={stream}&linkType=tcp';
 
+  /// Stream path of TVT cameras and door stations (`{profile}` = 1 main, 2 sub).
+  static const doorStationTemplate = '/profile{profile}';
+
+  /// The door-station default of earlier versions, which no TVT intercom serves.
+  static const legacyDoorTemplate = '/live/{stream}';
+
   final String id;
   final String name;
   final DeviceKind kind;
@@ -144,7 +150,8 @@ class DeviceConfig {
       .replaceAll('{channel}', '$channel')
       .replaceAll('{channel0}', '${channel - 1}')
       .replaceAll('{stream}', quality.name)
-      .replaceAll('{streamIndex}', quality == StreamQuality.main ? '0' : '1');
+      .replaceAll('{streamIndex}', quality == StreamQuality.main ? '0' : '1')
+      .replaceAll('{profile}', quality == StreamQuality.main ? '1' : '2');
 
   DeviceConfig copyWith({
     String? name,
@@ -259,9 +266,9 @@ class DeviceConfig {
       id: 'door',
       name: 'Front Door',
       kind: DeviceKind.doorStation,
-      // Door stations differ by OEM; use ONVIF discovery in settings to
-      // fill the real stream path.
-      rtspPathTemplate: '/live/{stream}',
+      // TVT-made door stations (Techson TCTDB102 = TVT TD-E3110) serve
+      // /profile1 (main) and /profile2 (sub); ONVIF detection can override.
+      rtspPathTemplate: doorStationTemplate,
       supportsTalk: true,
     ),
     const DeviceConfig(id: 'monitor', name: 'Indoor Monitor', kind: DeviceKind.indoorMonitor),

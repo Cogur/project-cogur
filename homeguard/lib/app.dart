@@ -79,6 +79,10 @@ class _HomeGuardAppState extends State<HomeGuardApp> with WidgetsBindingObserver
         darkTheme: AppTheme.dark(),
         themeMode: ThemeMode.dark,
         routerConfig: _router,
+        // Android 15 draws apps edge-to-edge: keep content clear of the
+        // on-screen navigation buttons (Samsung) and side cut-outs. The top
+        // is handled by each AppBar.
+        builder: (context, child) => SafeArea(top: false, child: child ?? const SizedBox.shrink()),
       ),
     );
   }

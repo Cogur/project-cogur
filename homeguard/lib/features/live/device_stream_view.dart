@@ -106,15 +106,14 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
         final lapi = route.bridge || device.kind != DeviceKind.camera
             ? null
             : TvtLapiClient(host: route.host, port: route.httpPort, secure: route.secure, credentials: creds);
-        final owner = registry.credentialOwner(device.id);
+        // The device answering RTSP: the recorder for its cameras.
+        final target = registry.byId(device.parentId ?? device.id) ?? device;
         _access ??= VideoAccessCheck.instance.check(
           key: '${route.host}:${route.rtspPort}',
           rtspUri: route.rtspUri(path),
           plain: registry.credentialsFor(device.id)!,
-          form: route.bridge ? DigestPassword.plain : (owner?.digestPassword ?? DigestPassword.plain),
-          // Only learn a form for the device whose own account this is (a
-          // door station borrowing the NVR account must not change the NVR's).
-          tryOtherForms: !route.bridge && owner != null && owner.id == (device.parentId ?? device.id),
+          form: route.bridge ? DigestPassword.plain : target.digestPassword,
+          tryOtherForms: !route.bridge,
           pictures: lapi == null
               ? null
               : (c) => TvtLapiClient(
@@ -124,7 +123,7 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
                   credentials: c,
                 ),
           channel: device.channel,
-          onForm: (f) => registry.upsert(owner!.copyWith(digestPassword: f)),
+          onForm: (f) => registry.upsert(target.copyWith(digestPassword: f)),
         );
         return FutureBuilder<VideoAccess>(
           future: _access,
