@@ -25,7 +25,7 @@ OEM brands. Everything below is covered by tests against fakes; real-hardware st
 | Sign-in with the SuperLive / web account (NVMS-9000 `reqLogin`/`doLogin`) | **Works on the TCR I12** |
 | Camera list from the NVR, one-tap "switch on RTSP" | Camera list **works on the TCR I12** (4 channels) |
 | Live view over RTSP | **Works on the TCR I12** (H.265). This firmware expects `MD5(password)` in upper-case hex as the Digest password for RTSP and the HTTP API; sign-in detects and remembers that |
-| Recordings (HTTP API `SearchByTime`) + playback timeline | Implemented; the RTSP **playback URL form is unconfirmed** on this firmware |
+| Recordings (HTTP API `SearchByTime`) + playback timeline | The TCR I12 speaks HTTP API 2.0.0; its recording calendar (`SearchRecordDate`) works. Time search and the playback URL now follow the published [Viewtron/TVT HTTP API guide](https://github.com/mikehaldas/IP-Camera-API) (`recTypes` list required, playback `chID` 0-based); waiting for a real-device check |
 | Door unlock via TVT protocol alarm output (port 9008) | **Experimental guess**: TVT documents no unlock API for the TD-E3110 |
 | Remote access by serial (Bridge, P2P 2.0) | Implemented on the vendor Linux SDK; needs an x86_64 Linux host; not yet tried with this NVR |
 | P2P directly in the phone app | **Not possible yet**: TVT ships the P2P client only as x86/Windows binaries; the UDP protocol is undocumented |

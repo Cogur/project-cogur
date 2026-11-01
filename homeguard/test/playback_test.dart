@@ -104,7 +104,8 @@ void main() {
     );
     expect(
       RecordingService.playbackPath(cam, s),
-      '/chID=2&date=2026-10-30&time=08:05:09&timelen=120&streamType=main&action=playback&linkType=tcp',
+      // Playback chID is 0-based (camera 2 → chID=1), per the HTTP API guide.
+      '/chID=1&date=2026-10-30&time=08:05:09&timelen=120&streamType=main&action=playback&linkType=tcp',
     );
   });
 
@@ -129,9 +130,9 @@ void main() {
     addTearDown(() => lapi.server.close(force: true));
     await setUpRegistry(httpPort: lapi.server.port);
     final recs = await RecordingService(registry, cm).search('cam2', DateTime(2026, 10, 30, 15));
-    expect(lapi.lastBody, contains('<channelID>2</channelID>'));
-    expect(lapi.lastBody, contains('<startTime>2026-10-30T00:00:00</startTime>'));
-    expect(lapi.lastBody, contains('<endTime>2026-10-30T23:59:59</endTime>'));
+    expect(lapi.lastBody, contains('<recTypes type="list">'));
+    expect(lapi.lastBody, contains('<starttime type="string"><![CDATA[2026-10-30 00:00:00]]></starttime>'));
+    expect(lapi.lastBody, contains('<endtime type="string"><![CDATA[2026-10-30 23:59:59]]></endtime>'));
     expect(recs.map((r) => r.segment.start.hour), [7, 8]); // sorted, broken one dropped
     expect(recs.last.segment.type, 'motion');
     expect(recs.first.route.kind, RouteKind.lan);

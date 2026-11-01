@@ -301,44 +301,27 @@ class TvtProbe {
       final now = DateTime.now();
       final day = DateTime(now.year, now.month, now.day);
       final end = day.add(const Duration(hours: 23, minutes: 59, seconds: 59));
-      String t(DateTime d, bool iso) => TvtLapiClient.formatTime(d, isoT: iso);
       const ns = 'xmlns="http://www.ipc.com/ver10"';
-      final a = t(day, false);
-      final b = t(end, false);
+      final types = await lapi.recordTypes();
+      out.add('  record types: ${types.join(', ')}');
       final searches = <String, (String, String)>{
-        'SearchByTime ISO': (
-          '/SearchByTime/1',
-          '<SearchByTime><channelID>1</channelID><startTime>${t(day, true)}</startTime>'
-              '<endTime>${t(end, true)}</endTime></SearchByTime>',
-        ),
-        'config/search': ('/SearchByTime/1', TvtLapiClient.configSearchBody(day, end)),
-        'config 2.0 search': (
-          '/SearchByTime/1',
-          '<config version="2.0.0" $ns><search><starttime type="string"><![CDATA[$a]]></starttime>'
-              '<endtime type="string"><![CDATA[$b]]></endtime></search></config>',
-        ),
-        'config 2.0 camel': (
-          '/SearchByTime/1',
-          '<config version="2.0.0" $ns><search><startTime type="string"><![CDATA[$a]]></startTime>'
-              '<endTime type="string"><![CDATA[$b]]></endTime></search></config>',
-        ),
-        'config 2.0 plain': (
-          '/SearchByTime/1',
-          '<config version="2.0.0" $ns><search><starttime>$a</starttime><endtime>$b</endtime></search></config>',
-        ),
-        'config 2.0 chid': (
-          '/SearchByTime',
-          '<config version="2.0.0" $ns><search><chid type="uint32">1</chid><starttime type="string">'
-              '<![CDATA[$a]]></starttime><endtime type="string"><![CDATA[$b]]></endtime></search></config>',
-        ),
+        'config + recTypes': ('/SearchByTime/1', TvtLapiClient.configSearchBody(day, end, recTypes: types)),
       };
       for (final e in searches.entries) {
         out.add('  raw ${e.key}: ${await lapi.raw('POST', e.value.$1, e.value.$2)}');
       }
+      try {
+        final segs = await lapi.searchByTime(1, day, end);
+        out.add(
+          '  recordings today (camera 1): ${segs.length}${segs.isEmpty ? '' : ', first ${segs.first.start} – ${segs.first.end} ${segs.first.type}'}',
+        );
+      } catch (e) {
+        out.add('  recordings today (camera 1): $e');
+      }
       final month =
           '<config version="2.0.0" $ns><search><year>${now.year}</year><month>${now.month}</month></search></config>';
       out.add('  raw SearchRecordDate: ${await lapi.raw('POST', '/SearchRecordDate/1', month)}');
-      out.add('  raw GetSupportedAPI: ${await lapi.raw('POST', '/GetSupportedAPI')}');
+
       try {
         final jpeg = await lapi.snapshot(1);
         out.add('HTTP API snapshot (camera 1): OK, ${jpeg.length ~/ 1024} kB');

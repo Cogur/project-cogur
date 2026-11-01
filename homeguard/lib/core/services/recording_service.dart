@@ -38,11 +38,10 @@ class RecordingService {
   final ConnectionManager _connections;
   final DeviceHttpClient? _http;
 
-  /// TVT RTSP playback form used by NVMS-9000 recorders (and their OEM
-  /// copies). Experimental: not confirmed on every firmware, so it can be
-  /// overridden per recorder later if a device uses another form.
+  /// TVT RTSP playback form from the HTTP API guide (Viewtron/TVT docs):
+  /// `chID` is 0-based here, unlike the live URL.
   static const tvtPlaybackTemplate =
-      '/chID={channel}&date={date}&time={time}&timelen={seconds}&streamType={stream}&action=playback&linkType=tcp';
+      '/chID={channel0}&date={date}&time={time}&timelen={seconds}&streamType={stream}&action=playback&linkType=tcp';
 
   static String playbackPath(
     DeviceConfig camera,
@@ -55,6 +54,7 @@ class RecordingService {
     String two(int v) => v.toString().padLeft(2, '0');
     final t = s.start;
     return tvtPlaybackTemplate
+        .replaceAll('{channel0}', '${camera.channel - 1}') // playback chID is 0-based
         .replaceAll('{channel}', '${camera.channel}')
         .replaceAll('{date}', '${t.year}-${two(t.month)}-${two(t.day)}')
         .replaceAll('{time}', '${two(t.hour)}:${two(t.minute)}:${two(t.second)}')

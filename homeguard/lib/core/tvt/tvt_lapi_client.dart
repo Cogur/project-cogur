@@ -95,8 +95,9 @@ class TvtLapiClient {
   Future<Set<String>> supportedApis() async {
     if (_apis != null) return _apis!;
     final doc = await _post('/System/SupportedAPIs', '', '/GetSupportedAPIs');
+    // LAPI: <apiName>; HTTP API 2.0: <applicationInterfaces><item>.
     return _apis = {
-      for (final e in doc.findAllElements('apiName'))
+      for (final e in [...doc.findAllElements('apiName'), ...doc.findAllElements('item')])
         if (e.innerText.trim().isNotEmpty) e.innerText.trim(),
     };
   }
@@ -130,12 +131,37 @@ class TvtLapiClient {
     }
   }
 
-  /// Body of the TVT HTTP API (IP media device guide v1.x) time search.
-  static String configSearchBody(DateTime from, DateTime to) =>
+  /// Recording types for [configSearchBody], as the guide's examples list
+  /// them; [recordTypes] asks the device for its own list.
+  static const defaultRecordTypes = ['manual', 'schedule', 'motion', 'sensor', 'intel detection'];
+
+  /// Body of the TVT HTTP API time search (`/SearchByTime/<ch>`): the
+  /// `recTypes` list is required, without it the device answers
+  /// "Invalid XML Content".
+  static String configSearchBody(DateTime from, DateTime to, {List<String> recTypes = defaultRecordTypes}) =>
       '<config version="1.0" xmlns="http://www.ipc.com/ver10"><search>'
+      '<recTypes type="list"><itemType type="recType"></itemType>'
+      '${recTypes.map((t) => '<item>$t</item>').join()}</recTypes>'
       '<starttime type="string"><![CDATA[${formatTime(from, isoT: false)}]]></starttime>'
       '<endtime type="string"><![CDATA[${formatTime(to, isoT: false)}]]></endtime>'
       '</search></config>';
+
+  List<String>? _recTypes;
+
+  /// The device's recording types (`/GetRecordType`), else the defaults.
+  Future<List<String>> recordTypes() async {
+    if (_recTypes != null) return _recTypes!;
+    try {
+      final res = await _http.send('POST', _uri('/GetRecordType'), credentials: credentials);
+      final types = [
+        for (final e in XmlDocument.parse(res.body).findAllElements('item'))
+          if (e.innerText.trim().isNotEmpty && e.innerText.trim() != 'nic broken') e.innerText.trim(),
+      ];
+      return _recTypes = types.isEmpty ? defaultRecordTypes : types;
+    } catch (_) {
+      return _recTypes = defaultRecordTypes;
+    }
+  }
 
   Future<TvtNatInfo> natInfo() async {
     XmlDocument doc;
@@ -162,18 +188,23 @@ class TvtLapiClient {
     );
   }
 
-  /// Days of [year]/[month] that have recordings on [channel].
+  /// Days of [year]/[month] that have recordings on [channel]. The real
+  /// NVR (HTTP API 2.0) answers `<dateList><item>2026-10-7</item>…`.
   Future<Set<DateTime>> recordDates(int channel, int year, int month) async {
     final doc = await _post(
       '/Playback/SearchRecordDate',
-      '<SearchRecordDate><channelID>$channel</channelID><year>$year</year><month>$month</month></SearchRecordDate>',
+      '<config version="2.0.0" xmlns="http://www.ipc.com/ver10"><search>'
+          '<year>$year</year><month>$month</month></search></config>',
       '/SearchRecordDate/$channel',
     );
     final out = <DateTime>{};
-    for (final e in doc.findAllElements('date')) {
+    for (final e in [...doc.findAllElements('item'), ...doc.findAllElements('date')]) {
       final t = e.innerText.trim();
-      final d = DateTime.tryParse(t) ?? _dayOfMonth(t, year, month);
-      if (d != null) out.add(DateTime(d.year, d.month, d.day));
+      final p = RegExp(r'^(\d{4})-(\d{1,2})-(\d{1,2})').firstMatch(t);
+      final d = p != null
+          ? DateTime(int.parse(p[1]!), int.parse(p[2]!), int.parse(p[3]!))
+          : _dayOfMonth(t, year, month);
+      if (d != null) out.add(d);
     }
     return out;
   }
@@ -199,9 +230,14 @@ class TvtLapiClient {
         '<SearchByTime><channelID>$channel</channelID>'
         '<startTime>${formatTime(from, isoT: isoT)}</startTime>'
         '<endTime>${formatTime(to, isoT: isoT)}</endTime></SearchByTime>';
+    final types = await recordTypes();
     final styles = <Future<XmlDocument> Function()>[
+      () => _post(
+        '/Playback/SearchByTime',
+        configSearchBody(from, to, recTypes: types),
+        '/SearchByTime/$channel',
+      ),
       () => _post('/Playback/SearchByTime', lapiBody(true), '/SearchByTime/$channel'),
-      () => _post('/Playback/SearchByTime', configSearchBody(from, to), '/SearchByTime/$channel'),
       () => _post('/Playback/SearchByTime', lapiBody(false), '/SearchByTime/$channel'),
     ];
     final order = [?_searchStyle, ...List.generate(styles.length, (i) => i)];
