@@ -6,6 +6,7 @@ import '../../core/onvif/onvif_client.dart';
 import '../../core/security/secure_store.dart';
 import '../../core/services/device_registry.dart';
 import '../../theme/app_theme.dart';
+import '../live/video_access.dart';
 
 class DeviceEditPage extends StatefulWidget {
   const DeviceEditPage({super.key, required this.deviceId});
@@ -82,8 +83,12 @@ class _DeviceEditPageState extends State<DeviceEditPage> {
     );
     await registry.upsert(updated);
     if (_d.parentId == null && _user.text.trim().isNotEmpty && _pass.text.isNotEmpty) {
+      // A new account may use a different password form: learn it afresh.
+      await registry.upsert(updated.copyWith(digestPassword: DigestPassword.plain));
       await registry.setCredentials(_d.id, Credentials(_user.text.trim(), _pass.text));
     }
+    // Tiles re-check access with the new settings, no manual refresh needed.
+    VideoAccessCheck.instance.reset();
     if (mounted) Navigator.of(context).pop();
   }
 

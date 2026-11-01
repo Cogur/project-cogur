@@ -46,7 +46,15 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
         if (mounted) setState(() => _lines.add('${d.name}: $err'));
       }
     }
-    if (mounted) setState(() => _running = false);
+    if (mounted) {
+      setState(() {
+        if (_lines.where((l) => l.startsWith('Open ports: none')).length == hosts.length &&
+            hosts.isNotEmpty) {
+          _lines.add('\nNo device answered at all: the phone was probably not on the home Wi-Fi.');
+        }
+        _running = false;
+      });
+    }
   }
 
   @override
@@ -75,7 +83,7 @@ class _DiagnosticsPageState extends State<DiagnosticsPage> {
           const Text(
             'Checks which services each device offers (read-only, nothing is changed). Copy the report to get '
             'support for features the manufacturer does not document. Passwords are never included and cloud '
-            'serials are masked.',
+            'serials are masked. Keep the app open and the phone on the home Wi-Fi while it runs.',
             style: TextStyle(color: AppColors.textMuted),
           ),
           const SizedBox(height: 16),
