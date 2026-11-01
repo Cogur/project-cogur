@@ -8,9 +8,12 @@ import '../security/secure_store.dart';
 import '../utils/log.dart';
 
 class DeviceHttpException implements Exception {
-  DeviceHttpException(this.message, {this.statusCode});
+  DeviceHttpException(this.message, {this.statusCode, this.body});
   final String message;
   final int? statusCode;
+
+  /// What the device sent with the error (often says what it disliked).
+  final String? body;
   @override
   String toString() => message;
 }
@@ -66,7 +69,11 @@ class DeviceHttpClient {
         throw DeviceHttpException('Device rejected the credentials', statusCode: res.statusCode);
       }
       if (res.statusCode >= 400) {
-        throw DeviceHttpException('Device returned HTTP ${res.statusCode}', statusCode: res.statusCode);
+        throw DeviceHttpException(
+          'Device returned HTTP ${res.statusCode}',
+          statusCode: res.statusCode,
+          body: res.body,
+        );
       }
       return res;
     } on TimeoutException {

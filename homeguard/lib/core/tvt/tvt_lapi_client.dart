@@ -125,7 +125,8 @@ class TvtLapiClient {
       final text = res.body.replaceAll(RegExp(r'\s+'), ' ');
       return 'HTTP ${res.statusCode}: ${text.length > 300 ? '${text.substring(0, 300)}…' : text}';
     } on DeviceHttpException catch (e) {
-      return e.message;
+      final b = (e.body ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
+      return b.isEmpty ? e.message : '${e.message}: ${b.length > 300 ? '${b.substring(0, 300)}…' : b}';
     }
   }
 

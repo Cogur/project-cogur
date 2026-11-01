@@ -126,7 +126,10 @@ class RecordingService {
       if (e.statusCode == 404 || e.statusCode == 501 || e.statusCode == 503) {
         throw RecordingException('The NVR\'s HTTP API ("API Server") is switched off.', needsApiServer: true);
       }
-      throw RecordingException(e.message);
+      final why = (e.body ?? '').replaceAll(RegExp(r'<[^>]+>'), ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+      throw RecordingException(
+        why.isEmpty ? e.message : '${e.message}: ${why.length > 120 ? why.substring(0, 120) : why}',
+      );
     } on FormatException {
       throw RecordingException('The NVR answered recording search in an unknown format.');
     }
