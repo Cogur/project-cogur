@@ -104,8 +104,8 @@ void main() {
     );
     expect(
       RecordingService.playbackPath(cam, s),
-      // Playback chID is 0-based (camera 2 → chID=1), per the HTTP API guide.
-      '/chID=1&date=2026-10-30&time=08:05:09&timelen=120&streamType=main&action=playback&linkType=tcp',
+      // 1-based like live view, as the real NVR answers (not 0-based as documented).
+      '/chID=2&date=2026-10-30&time=08:05:09&timelen=120&streamType=main&action=playback&linkType=tcp',
     );
   });
 

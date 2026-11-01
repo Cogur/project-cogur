@@ -39,9 +39,10 @@ class RecordingService {
   final DeviceHttpClient? _http;
 
   /// TVT RTSP playback form from the HTTP API guide (Viewtron/TVT docs):
-  /// `chID` is 0-based here, unlike the live URL.
+  /// The guide says `chID` is 0-based here, but the TCR I12 numbers it from
+  /// 1 like the live URL (0-based played the neighbouring camera).
   static const tvtPlaybackTemplate =
-      '/chID={channel0}&date={date}&time={time}&timelen={seconds}&streamType={stream}&action=playback&linkType=tcp';
+      '/chID={channel}&date={date}&time={time}&timelen={seconds}&streamType={stream}&action=playback&linkType=tcp';
 
   static String playbackPath(
     DeviceConfig camera,

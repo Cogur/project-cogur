@@ -215,20 +215,27 @@ class _Placeholder extends StatelessWidget {
   Widget build(BuildContext context) => ColoredBox(
     color: Colors.black,
     child: Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          busy
-              ? const SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2))
-              : Icon(icon, color: Colors.white54),
-          const SizedBox(height: 8),
-          Text(
-            text,
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.white60, fontSize: 12),
+      // Bottom padding keeps the text clear of the tile's name label.
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 40),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              busy
+                  ? const SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Icon(icon, color: Colors.white54),
+              const SizedBox(height: 8),
+              Text(
+                text,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white60, fontSize: 12),
+              ),
+              if (onRetry != null) TextButton(onPressed: onRetry, child: const Text('Retry')),
+            ],
           ),
-          if (onRetry != null) TextButton(onPressed: onRetry, child: const Text('Retry')),
-        ],
+        ),
       ),
     ),
   );

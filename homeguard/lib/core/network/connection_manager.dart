@@ -182,7 +182,9 @@ class ConnectionManager extends ChangeNotifier {
     // 1. LAN — lowest latency, never leaves the building.
     if (d.lanHost.isNotEmpty) {
       final port = d.kind == DeviceKind.indoorMonitor ? d.httpPort : d.rtspPort;
-      final rtt = await _probe(d.lanHost, port, lanTimeout);
+      // Wi-Fi intercoms answer slower than the wired recorder.
+      final wireless = d.kind == DeviceKind.doorStation || d.kind == DeviceKind.indoorMonitor;
+      final rtt = await _probe(d.lanHost, port, wireless ? lanTimeout * 2 : lanTimeout);
       if (rtt != null) {
         result = ResolvedRoute(
           kind: RouteKind.lan,

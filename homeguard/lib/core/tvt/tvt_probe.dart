@@ -310,6 +310,15 @@ class TvtProbe {
       for (final e in searches.entries) {
         out.add('  raw ${e.key}: ${await lapi.raw('POST', e.value.$1, e.value.$2)}');
       }
+      out.add('  raw GetChannelInfo: ${await lapi.raw('POST', '/GetChannelInfo')}');
+      for (final ty in ['manual', 'schedule', 'motion', 'intelligentDetection']) {
+        final reply = await lapi.raw(
+          'POST',
+          '/SearchByTime/3',
+          TvtLapiClient.configSearchBody(day, end, recTypes: [ty]),
+        );
+        out.add('  camera 3 only $ty: ${reply.length > 200 ? reply.substring(reply.length - 200) : reply}');
+      }
       for (var ch = 2; ch <= 4; ch++) {
         final chTypes = await lapi.recordTypes(ch);
         final reply = await lapi.raw(
