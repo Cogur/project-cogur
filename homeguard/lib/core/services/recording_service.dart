@@ -9,13 +9,20 @@ import 'device_registry.dart';
 
 /// One recorded piece of video and how to play it.
 class Recording {
-  const Recording({required this.segment, required this.device, required this.path, required this.route});
+  const Recording({
+    required this.segment,
+    required this.device,
+    required this.path,
+    required this.route,
+    this.quality = StreamQuality.sub,
+  });
   final RecordSegment segment;
   final DeviceConfig device;
 
   /// RTSP path on [route] that plays this recording.
   final String path;
   final ResolvedRoute route;
+  final StreamQuality quality;
 }
 
 class RecordingException implements Exception {
@@ -75,8 +82,8 @@ class RecordingService {
         '${t.year}${[t.month, t.day, t.hour, t.minute, t.second].map((v) => v.toString().padLeft(2, '0')).join()}';
     final path = r.route.bridge
         ? '/${r.device.parentId ?? r.device.id}_ch${r.device.channel}_pb_${stamp(seg.start)}_${stamp(seg.end)}'
-        : playbackPath(r.device, seg);
-    return Recording(segment: seg, device: r.device, path: path, route: r.route);
+        : playbackPath(r.device, seg, quality: r.quality);
+    return Recording(segment: seg, device: r.device, path: path, route: r.route, quality: r.quality);
   }
 
   Credentials _creds(DeviceConfig d) {
@@ -85,7 +92,11 @@ class RecordingService {
     return c;
   }
 
-  Future<List<Recording>> search(String cameraId, DateTime day) async {
+  Future<List<Recording>> search(
+    String cameraId,
+    DateTime day, {
+    StreamQuality quality = StreamQuality.sub,
+  }) async {
     final camera = _registry.byId(cameraId);
     if (camera == null) throw RecordingException('Unknown camera');
     final recorder = camera.parentId == null ? camera : _registry.byId(camera.parentId!) ?? camera;
@@ -131,7 +142,13 @@ class RecordingService {
       final segs = await lapi.searchByTime(camera.channel, from, to);
       return [
         for (final s in segs)
-          Recording(segment: s, device: camera, path: playbackPath(camera, s), route: route),
+          Recording(
+            segment: s,
+            device: camera,
+            path: playbackPath(camera, s, quality: quality),
+            route: route,
+            quality: quality,
+          ),
       ];
     } on DeviceHttpException catch (e) {
       if (e.statusCode == 404 || e.statusCode == 501 || e.statusCode == 503) {

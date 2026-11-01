@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../core/models/device.dart';
 import '../../core/services/device_registry.dart';
 import '../../core/services/intercom_service.dart';
+import '../settings/settings_controller.dart';
 import 'device_stream_view.dart';
 import 'stream_actions.dart';
 
@@ -19,7 +20,10 @@ class FullscreenPlayerPage extends StatefulWidget {
 }
 
 class _FullscreenPlayerPageState extends State<FullscreenPlayerPage> {
-  StreamQuality _quality = StreamQuality.main;
+  // Starts in the quality chosen in Settings; the HD/SD button switches.
+  late StreamQuality _quality = context.read<SettingsController>().preferHd
+      ? StreamQuality.main
+      : StreamQuality.sub;
   bool _muted = false;
   bool _chrome = true;
   Timer? _hide;

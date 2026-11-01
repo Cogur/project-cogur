@@ -45,7 +45,7 @@ class LiveGridPage extends StatelessWidget {
                   itemCount: devices.length,
                   itemBuilder: (context, i) => _CameraTile(
                     device: devices[i],
-                    quality: settings.gridUsesSubstream ? StreamQuality.sub : StreamQuality.main,
+                    quality: settings.preferHd ? StreamQuality.main : StreamQuality.sub,
                     muted: settings.muteGridAudio,
                   ),
                 );

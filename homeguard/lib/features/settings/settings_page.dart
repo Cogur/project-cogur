@@ -51,10 +51,13 @@ class SettingsPage extends StatelessWidget {
           ),
           const _Header('Streaming'),
           SwitchListTile(
-            title: const Text('Use sub-stream in grid'),
-            subtitle: const Text('Lower bandwidth and CPU; fullscreen always starts in HD'),
-            value: settings.gridUsesSubstream,
-            onChanged: (v) => settings.update(gridUsesSubstream: v),
+            title: const Text('HD video'),
+            subtitle: const Text(
+              'Off: SD (starts faster, fewer stalls). On: HD for live view and recordings. '
+              'Fullscreen can switch either way.',
+            ),
+            value: settings.preferHd,
+            onChanged: (v) => settings.update(preferHd: v),
           ),
           SwitchListTile(
             title: const Text('Mute audio in grid'),

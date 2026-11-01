@@ -3,6 +3,7 @@ import 'package:intl/intl.dart' hide TextDirection;
 import 'package:provider/provider.dart';
 
 import '../../core/app_services.dart';
+import '../settings/settings_controller.dart';
 import '../../core/models/device.dart';
 import '../../core/services/device_registry.dart';
 import '../../core/services/recording_service.dart';
@@ -52,7 +53,12 @@ class _PlaybackPageState extends State<PlaybackPage> {
       _playing = null;
     });
     try {
-      final recs = await context.read<AppServices>().recordings.search(id, _day);
+      final hd = context.read<SettingsController>().preferHd;
+      final recs = await context.read<AppServices>().recordings.search(
+        id,
+        _day,
+        quality: hd ? StreamQuality.main : StreamQuality.sub,
+      );
       if (!mounted || id != _cameraId) return;
       setState(() => _recs = recs);
     } on RecordingException catch (e) {

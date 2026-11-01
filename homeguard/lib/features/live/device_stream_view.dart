@@ -150,9 +150,13 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
                     muted: widget.muted,
                     fit: widget.fit,
                     playerTag: widget.playerTag,
+                    // The still (full resolution) only bridges the first start;
+                    // showing it again on every stall alternated HD still and
+                    // SD video, which looked like flickering.
                     onStatusChanged: (st, _) {
-                      final playing = st == RtspPlayerStatus.playing;
-                      if (playing != _playing && mounted) setState(() => _playing = playing);
+                      if (st == RtspPlayerStatus.playing && !_playing && mounted) {
+                        setState(() => _playing = true);
+                      }
                     },
                   ),
                   // A still from the recorder while the video waits for its
