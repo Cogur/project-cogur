@@ -160,6 +160,11 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       'interpolation': 'no',
       'network-timeout': '6',
       'untimed': 'yes',
+      // Joining a stream between keyframes otherwise shows a black picture
+      // with only the moving parts drawn in until the next keyframe (several
+      // seconds on H.265 cameras). Show nothing until a full frame decodes.
+      'vd-lavc-o': 'flags=-output_corrupt',
+      'vd-lavc-show-all': 'no',
     };
     // Recordings use the same settings: buffered playback ("untimed" off)
     // waited forever on the NVR's playback timestamps and never showed a
@@ -189,6 +194,13 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     if (_status == RtspPlayerStatus.error || _status == RtspPlayerStatus.ended) return;
     final silent = DateTime.now().difference(_lastProgress);
     if (silent > Duration(seconds: widget.stallTimeoutSeconds)) {
+      if (!widget.live && _status == RtspPlayerStatus.playing) {
+        // The NVR keeps a playback session open after the clip's last frame:
+        // that is its end, not a dropout to reconnect (which replayed it).
+        _watchdog?.cancel();
+        _setStatus(RtspPlayerStatus.ended, 'End of recording');
+        return;
+      }
       _onFailure(
         _status == RtspPlayerStatus.connecting
             ? 'Camera did not start streaming'

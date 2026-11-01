@@ -42,9 +42,15 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
   ConnectionManager? _connections;
 
   Future<VideoAccess>? _access;
+  bool _playing = false;
 
   void _onAccessReset() {
-    if (mounted) setState(() => _access = null);
+    if (mounted) {
+      setState(() {
+        _access = null;
+        _playing = false;
+      });
+    }
   }
 
   @override
@@ -70,7 +76,10 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
   }
 
   void _resolve({bool force = false}) {
-    setState(() => _route = _connections!.resolve(widget.deviceId, force: force));
+    setState(() {
+      _playing = false;
+      _route = _connections!.resolve(widget.deviceId, force: force);
+    });
   }
 
   @override
@@ -132,12 +141,27 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
               return const _Placeholder(icon: Icons.radar, text: 'Connecting…', busy: true);
             }
             final Widget content = switch (access.data ?? VideoAccess.video) {
-              VideoAccess.video => RtspPlayerWidget(
-                key: ValueKey('${widget.deviceId}-${widget.quality.name}-${route.host}'),
-                rtspUrl: route.rtspUrl(path, creds),
-                muted: widget.muted,
-                fit: widget.fit,
-                playerTag: widget.playerTag,
+              VideoAccess.video => Stack(
+                fit: StackFit.expand,
+                children: [
+                  RtspPlayerWidget(
+                    key: ValueKey('${widget.deviceId}-${widget.quality.name}-${route.host}'),
+                    rtspUrl: route.rtspUrl(path, creds),
+                    muted: widget.muted,
+                    fit: widget.fit,
+                    playerTag: widget.playerTag,
+                    onStatusChanged: (st, _) {
+                      final playing = st == RtspPlayerStatus.playing;
+                      if (playing != _playing && mounted) setState(() => _playing = playing);
+                    },
+                  ),
+                  // A still from the recorder while the video waits for its
+                  // first keyframe, instead of a black tile.
+                  if (!_playing && lapi != null)
+                    IgnorePointer(
+                      child: _Poster(client: lapi, channel: device.channel, fit: widget.fit),
+                    ),
+                ],
               ),
               VideoAccess.pictures when lapi != null => _SnapshotView(
                 key: ValueKey('snap-${widget.deviceId}-${route.host}'),
@@ -345,4 +369,43 @@ class _SnapshotViewState extends State<_SnapshotView> {
       ],
     );
   }
+}
+
+/// One still picture from the recorder's HTTP API, shown until video plays.
+class _Poster extends StatefulWidget {
+  const _Poster({required this.client, required this.channel, required this.fit});
+  final TvtLapiClient client;
+  final int channel;
+  final BoxFit fit;
+
+  @override
+  State<_Poster> createState() => _PosterState();
+}
+
+class _PosterState extends State<_Poster> {
+  late final Future<Uint8List?> _jpeg = widget.client
+      .snapshot(widget.channel)
+      .then<Uint8List?>((b) => b, onError: (Object _) => null);
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Uint8List?>(
+    future: _jpeg,
+    builder: (context, snap) {
+      final bytes = snap.data;
+      if (bytes == null) return const SizedBox.shrink();
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          Image.memory(bytes, fit: widget.fit, gaplessPlayback: true),
+          const Align(
+            alignment: Alignment.bottomRight,
+            child: Padding(
+              padding: EdgeInsets.all(8),
+              child: SizedBox.square(dimension: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+          ),
+        ],
+      );
+    },
+  );
 }
