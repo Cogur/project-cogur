@@ -116,11 +116,14 @@ void main() {
       '<item><startTime type="string">2026-10-31 10:00:00</startTime><endTime type="string">2026-10-31 10:30:00</endTime>'
       '<recType>motion</recType></item>'
       '<item><startTime>2026-10-31 08:00:00</startTime><stopTime>2026-10-31 09:00:00</stopTime></item>'
+      '<item><starttime type="string" seconds="15" recType="intel detection"><![CDATA[2026-10-31 11:00:00]]></starttime>'
+      '<endtime><![CDATA[2026-10-31 11:00:15]]></endtime></item>'
       '</recData></config>',
     );
     final segs = TvtLapiClient.parseSegments(doc, 4);
-    expect(segs.map((s) => s.start.hour), [8, 10]);
-    expect(segs.last.type, 'motion');
+    expect(segs.map((s) => s.start.hour), [8, 10, 11]);
+    expect(segs[1].type, 'motion');
+    expect(segs.last.type, 'intel detection'); // as the real NVR reports it
     expect(segs.first.channel, 4);
   });
 

@@ -146,22 +146,42 @@ class TvtLapiClient {
       '<endtime type="string"><![CDATA[${formatTime(to, isoT: false)}]]></endtime>'
       '</search></config>';
 
-  List<String>? _recTypes;
+  final _recTypes = <int, List<String>>{};
 
-  /// The device's recording types (`/GetRecordType`), else the defaults.
-  Future<List<String>> recordTypes() async {
-    if (_recTypes != null) return _recTypes!;
-    try {
-      final res = await _http.send('POST', _uri('/GetRecordType'), credentials: credentials);
-      final types = [
-        for (final e in XmlDocument.parse(res.body).findAllElements('item'))
-          if (e.innerText.trim().isNotEmpty && e.innerText.trim() != 'nic broken') e.innerText.trim(),
-      ];
-      return _recTypes = types.isEmpty ? defaultRecordTypes : types;
-    } catch (_) {
-      return _recTypes = defaultRecordTypes;
+  /// The recording types [channel] supports (`/GetRecordType/<ch>`, then the
+  /// device-wide list), else the defaults. Channels can differ.
+  Future<List<String>> recordTypes([int channel = 0]) async {
+    final cached = _recTypes[channel];
+    if (cached != null) return cached;
+    for (final path in [if (channel > 0) '/GetRecordType/$channel', '/GetRecordType']) {
+      try {
+        final res = await _http.send('POST', _uri(path), credentials: credentials);
+        final types = [
+          for (final e in XmlDocument.parse(res.body).findAllElements('item'))
+            if (e.innerText.trim().isNotEmpty && e.innerText.trim() != 'nic broken') e.innerText.trim(),
+        ];
+        if (types.isNotEmpty) return _recTypes[channel] = types;
+      } catch (_) {
+        // Try the next form.
+      }
     }
+    return _recTypes[channel] = defaultRecordTypes;
   }
+
+  /// `errorCode`/`errorDesc` of an HTTP API failure body, e.g.
+  /// `3 Invalid XML Content`, or null.
+  static String? deviceError(DeviceHttpException e) {
+    final b = e.body;
+    if (b == null) return null;
+    final code = RegExp(r'errorCode="([^"]*)"').firstMatch(b)?[1];
+    final desc = RegExp(r'errorDesc="([^"]*)"').firstMatch(b)?[1];
+    if (code == null && desc == null) return null;
+    return [?code, ?desc].join(' ');
+  }
+
+  static bool _meansNothingFound(String? error) =>
+      error != null &&
+      RegExp(r'no (record|data|file)|not (exist|found)|empty', caseSensitive: false).hasMatch(error);
 
   Future<TvtNatInfo> natInfo() async {
     XmlDocument doc;
@@ -230,11 +250,18 @@ class TvtLapiClient {
         '<SearchByTime><channelID>$channel</channelID>'
         '<startTime>${formatTime(from, isoT: isoT)}</startTime>'
         '<endTime>${formatTime(to, isoT: isoT)}</endTime></SearchByTime>';
-    final types = await recordTypes();
+    final types = await recordTypes(channel);
+    const basic = ['manual', 'schedule', 'motion'];
     final styles = <Future<XmlDocument> Function()>[
       () => _post(
         '/Playback/SearchByTime',
         configSearchBody(from, to, recTypes: types),
+        '/SearchByTime/$channel',
+      ),
+      // A channel may reject a type it cannot record (e.g. AI detection).
+      () => _post(
+        '/Playback/SearchByTime',
+        configSearchBody(from, to, recTypes: basic),
         '/SearchByTime/$channel',
       ),
       () => _post('/Playback/SearchByTime', lapiBody(true), '/SearchByTime/$channel'),
@@ -251,11 +278,20 @@ class TvtLapiClient {
       } on DeviceHttpException catch (e) {
         // 400: wrong body form for this firmware; anything else is final.
         if (e.statusCode != 400 && !e.message.contains('device status')) rethrow;
-        Log.d('lapi', 'SearchByTime form $i rejected ($e)');
+        final why = deviceError(e);
+        if (_meansNothingFound(why)) return const [];
+        Log.d('lapi', 'SearchByTime form $i rejected ($e ${why ?? ''})');
         last = e;
       }
     }
-    if (doc == null) throw last ?? DeviceHttpException('Recording search failed');
+    if (doc == null) {
+      final why = last == null ? null : deviceError(last);
+      throw DeviceHttpException(
+        'Recording search refused${why == null ? '' : ' (NVR: $why)'}',
+        statusCode: last?.statusCode,
+        body: last?.body,
+      );
+    }
     return parseSegments(doc, channel);
   }
 
@@ -278,7 +314,13 @@ class TvtLapiClient {
               channel,
           start: s,
           end: end,
-          type: child(e, RegExp(r'type$', caseSensitive: false)) ?? '',
+          type:
+              child(e, RegExp(r'type$', caseSensitive: false)) ??
+              e.childElements
+                  .where((c) => startName.hasMatch(c.name.local))
+                  .firstOrNull
+                  ?.getAttribute('recType') ??
+              '',
         ),
       );
     }

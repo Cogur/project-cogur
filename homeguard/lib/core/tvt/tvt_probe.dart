@@ -310,6 +310,17 @@ class TvtProbe {
       for (final e in searches.entries) {
         out.add('  raw ${e.key}: ${await lapi.raw('POST', e.value.$1, e.value.$2)}');
       }
+      for (var ch = 2; ch <= 4; ch++) {
+        final chTypes = await lapi.recordTypes(ch);
+        final reply = await lapi.raw(
+          'POST',
+          '/SearchByTime/$ch',
+          TvtLapiClient.configSearchBody(day, end, recTypes: chTypes),
+        );
+        out.add(
+          '  camera $ch types ${chTypes.join('/')}: ${reply.length > 160 ? '${reply.substring(0, 160)}…' : reply}',
+        );
+      }
       try {
         final segs = await lapi.searchByTime(1, day, end);
         out.add(

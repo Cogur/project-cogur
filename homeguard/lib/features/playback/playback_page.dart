@@ -240,7 +240,7 @@ class _PlaybackPageState extends State<PlaybackPage> {
       d.inHours > 0 ? '${d.inHours} h ${d.inMinutes % 60} min' : '${d.inMinutes} min ${d.inSeconds % 60} s';
 
   static bool _isEvent(String type) =>
-      RegExp('motion|alarm|sensor|event|smart', caseSensitive: false).hasMatch(type);
+      RegExp('motion|alarm|sensor|event|smart|intel|detect', caseSensitive: false).hasMatch(type);
   static IconData _typeIcon(String type) => _isEvent(type) ? Icons.directions_run : Icons.videocam_outlined;
   static Color _typeColor(String type) => _isEvent(type) ? AppColors.warning : AppColors.primary;
 }
