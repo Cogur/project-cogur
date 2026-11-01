@@ -269,6 +269,7 @@ class _Player extends StatelessWidget {
               muted: false,
               playerTag: 'playback',
               stallTimeoutSeconds: 15,
+              live: false,
             ),
           ),
         ),

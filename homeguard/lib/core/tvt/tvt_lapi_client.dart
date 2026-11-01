@@ -114,7 +114,7 @@ class TvtLapiClient {
 
   /// One request, never throwing: `HTTP 200: <first characters>` for
   /// diagnostics of undocumented firmware.
-  Future<String> raw(String method, String path, [String body = '']) async {
+  Future<String> raw(String method, String path, [String body = '', int limit = 300]) async {
     try {
       final res = await _http.send(
         method,
@@ -124,10 +124,10 @@ class TvtLapiClient {
         headers: const {'Content-Type': 'application/xml'},
       );
       final text = res.body.replaceAll(RegExp(r'\s+'), ' ');
-      return 'HTTP ${res.statusCode}: ${text.length > 300 ? '${text.substring(0, 300)}…' : text}';
+      return 'HTTP ${res.statusCode}: ${text.length > limit ? '${text.substring(0, limit)}…' : text}';
     } on DeviceHttpException catch (e) {
       final b = (e.body ?? '').replaceAll(RegExp(r'\s+'), ' ').trim();
-      return b.isEmpty ? e.message : '${e.message}: ${b.length > 300 ? '${b.substring(0, 300)}…' : b}';
+      return b.isEmpty ? e.message : '${e.message}: ${b.length > limit ? '${b.substring(0, limit)}…' : b}';
     }
   }
 

@@ -24,7 +24,7 @@ class RtspPlayerRegistry {
   }
 }
 
-enum RtspPlayerStatus { connecting, playing, buffering, stalled, error }
+enum RtspPlayerStatus { connecting, playing, buffering, stalled, error, ended }
 
 /// Low-latency RTSP player with automatic recovery.
 ///
@@ -45,6 +45,7 @@ class RtspPlayerWidget extends StatefulWidget {
     this.stallTimeoutSeconds = 8,
     this.onStatusChanged,
     this.overlayBuilder,
+    this.live = true,
   });
 
   final double? width;
@@ -58,6 +59,10 @@ class RtspPlayerWidget extends StatefulWidget {
   final int stallTimeoutSeconds;
   final void Function(RtspPlayerStatus status, String? message)? onStatusChanged;
   final Widget Function(BuildContext, RtspPlayerStatus, String?, VoidCallback retry)? overlayBuilder;
+
+  /// Live camera (lowest latency, reconnect when it ends) or a recording
+  /// (buffered, stops at its end instead of starting over).
+  final bool live;
 
   @override
   State<RtspPlayerWidget> createState() => _RtspPlayerWidgetState();
@@ -125,8 +130,16 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       )
       ..add(
         _player.stream.completed.listen((done) {
+          if (!done) return;
+          if (!widget.live) {
+            // A recording simply ends; replaying it in a loop looked like a
+            // flickering picture.
+            _watchdog?.cancel();
+            _setStatus(RtspPlayerStatus.ended, 'End of recording');
+            return;
+          }
           // A live stream never "completes"; this means the device hung up.
-          if (done) _onFailure('Stream ended by device');
+          _onFailure('Stream ended by device');
         }),
       );
     _open();
@@ -135,6 +148,15 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   Future<void> _configureLowLatency() async {
     final p = _player.platform;
     if (p is! NativePlayer) return;
+    const playback = {
+      'rtsp-transport': 'tcp',
+      'cache': 'yes',
+      'cache-secs': '5',
+      'demuxer-readahead-secs': '2',
+      'demuxer-lavf-o': 'rtsp_transport=tcp',
+      'network-timeout': '10',
+      'untimed': 'no',
+    };
     const props = {
       'rtsp-transport': 'tcp',
       'cache': 'no',
@@ -148,7 +170,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       'network-timeout': '6',
       'untimed': 'yes',
     };
-    for (final e in props.entries) {
+    for (final e in (widget.live ? props : playback).entries) {
       await p.setProperty(e.key, e.value);
     }
   }
@@ -170,7 +192,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   }
 
   void _checkStall() {
-    if (_status == RtspPlayerStatus.error) return;
+    if (_status == RtspPlayerStatus.error || _status == RtspPlayerStatus.ended) return;
     final silent = DateTime.now().difference(_lastProgress);
     if (silent > Duration(seconds: widget.stallTimeoutSeconds)) {
       _onFailure(
@@ -331,6 +353,14 @@ class _DefaultOverlay extends StatelessWidget {
               ),
               TextButton(onPressed: onRetry, child: const Text('Retry now')),
             ],
+          ),
+        );
+      case RtspPlayerStatus.ended:
+        return Center(
+          child: TextButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.replay),
+            label: const Text('End of recording · play again'),
           ),
         );
     }

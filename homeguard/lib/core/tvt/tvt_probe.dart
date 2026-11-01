@@ -310,7 +310,14 @@ class TvtProbe {
       for (final e in searches.entries) {
         out.add('  raw ${e.key}: ${await lapi.raw('POST', e.value.$1, e.value.$2)}');
       }
-      out.add('  raw GetChannelInfo: ${await lapi.raw('POST', '/GetChannelInfo')}');
+      final chInfo = await lapi.raw('POST', '/GetChannelInfo', '', 20000);
+      final items = RegExp(r'<item>(.*?)</item>', dotAll: true).allMatches(chInfo).map((m) {
+        String f(String n) =>
+            RegExp('<$n[^>]*>(?:<!\\[CDATA\\[)?(.*?)(?:\\]\\]>)?</$n>', dotAll: true).firstMatch(m[1]!)?[1] ??
+            '?';
+        return 'id ${f('channelId')} "${f('name')}" ${f('status')}';
+      });
+      out.add('  channels (HTTP API): ${items.isEmpty ? chInfo : items.join('; ')}');
       for (final ty in ['manual', 'schedule', 'motion', 'intelligentDetection']) {
         final reply = await lapi.raw(
           'POST',
