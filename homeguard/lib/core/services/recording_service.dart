@@ -118,6 +118,16 @@ class RecordingService {
       http: _http,
     );
     try {
+      // The NVR answers a day without recordings with "Invalid XML Content";
+      // its per-channel calendar says first whether there is anything.
+      try {
+        final days = await lapi.recordDates(camera.channel, day.year, day.month);
+        if (!days.contains(from)) return const [];
+      } on DeviceHttpException {
+        // No calendar on this firmware: just search.
+      } on FormatException {
+        // Same.
+      }
       final segs = await lapi.searchByTime(camera.channel, from, to);
       return [
         for (final s in segs)

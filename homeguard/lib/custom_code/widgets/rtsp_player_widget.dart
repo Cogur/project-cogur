@@ -60,8 +60,8 @@ class RtspPlayerWidget extends StatefulWidget {
   final void Function(RtspPlayerStatus status, String? message)? onStatusChanged;
   final Widget Function(BuildContext, RtspPlayerStatus, String?, VoidCallback retry)? overlayBuilder;
 
-  /// Live camera (lowest latency, reconnect when it ends) or a recording
-  /// (buffered, stops at its end instead of starting over).
+  /// Live camera (reconnects when the stream ends) or a recording (stops
+  /// at its end instead of starting over).
   final bool live;
 
   @override
@@ -148,15 +148,6 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   Future<void> _configureLowLatency() async {
     final p = _player.platform;
     if (p is! NativePlayer) return;
-    const playback = {
-      'rtsp-transport': 'tcp',
-      'cache': 'yes',
-      'cache-secs': '5',
-      'demuxer-readahead-secs': '2',
-      'demuxer-lavf-o': 'rtsp_transport=tcp',
-      'network-timeout': '10',
-      'untimed': 'no',
-    };
     const props = {
       'rtsp-transport': 'tcp',
       'cache': 'no',
@@ -170,7 +161,10 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       'network-timeout': '6',
       'untimed': 'yes',
     };
-    for (final e in (widget.live ? props : playback).entries) {
+    // Recordings use the same settings: buffered playback ("untimed" off)
+    // waited forever on the NVR's playback timestamps and never showed a
+    // picture. What differs for recordings is the end (see `completed`).
+    for (final e in props.entries) {
       await p.setProperty(e.key, e.value);
     }
   }

@@ -326,6 +326,17 @@ class TvtProbe {
         );
         out.add('  camera 3 only $ty: ${reply.length > 200 ? reply.substring(reply.length - 200) : reply}');
       }
+      for (var ch = 1; ch <= 4; ch++) {
+        try {
+          final days = (await lapi.recordDates(ch, now.year, now.month)).toList()..sort();
+          out.add(
+            '  camera $ch calendar ${now.year}-${now.month}: ${days.length} days'
+            '${days.isEmpty ? '' : ', last ${days.last.month}-${days.last.day}'}',
+          );
+        } catch (e) {
+          out.add('  camera $ch calendar: $e');
+        }
+      }
       for (var ch = 2; ch <= 4; ch++) {
         final chTypes = await lapi.recordTypes(ch);
         final reply = await lapi.raw(
