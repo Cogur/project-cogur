@@ -73,6 +73,20 @@ class RtspClient {
 
   bool get isConnected => _socket != null && !_closed;
 
+  /// Receives interleaved RTP/RTCP packets after PLAY (diagnostics).
+  void Function(InterleavedPacket packet)? onPacket;
+
+  /// SETUP of one track over the RTSP connection; keeps the session id.
+  Future<RtspResponse> setupInterleaved(String url, {int channel = 0}) async {
+    final r = await request(
+      'SETUP',
+      url: url,
+      headers: {'Transport': 'RTP/AVP/TCP;unicast;interleaved=$channel-${channel + 1}'},
+    );
+    _session = r.session;
+    return r;
+  }
+
   Future<void> connect() async {
     final port = uri.hasPort ? uri.port : (uri.scheme == 'rtsps' ? 322 : 554);
     try {
@@ -105,7 +119,9 @@ class RtspClient {
       if (waiter != null && !waiter.isCompleted) waiter.complete(r);
     }
     _parser.responses.clear();
-    // Inbound RTP (e.g. RTCP receiver reports) is not needed for talk.
+    // Inbound RTP is only wanted by diagnostics (RtpInspector).
+    final listener = onPacket;
+    if (listener != null) _parser.packets.forEach(listener);
     _parser.packets.clear();
   }
 

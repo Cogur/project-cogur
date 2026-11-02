@@ -30,9 +30,12 @@ Future<void> main() async {
       connections: services.connections,
     );
 
+    // Settings first: tiles built with the default (SD) and then switched
+    // to the saved HD choice reopened every camera once at start.
+    await settings.load();
     runApp(HomeGuardApp(services: services, auth: auth, settings: settings));
 
-    await Future.wait([settings.load(), services.events.load()]);
+    await services.events.load();
     await auth.init();
   }, (error, stack) => Log.e('zone', '$error'));
 }

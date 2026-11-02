@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'package:provider/provider.dart';
 
 import '../../core/models/device.dart';
+import '../../core/rtsp/rtp_inspector.dart';
 import '../../core/services/device_registry.dart';
 import '../../core/services/recording_service.dart';
 import '../../core/utils/log.dart';
@@ -20,6 +23,7 @@ class LabVariant {
     this.preroll = Duration.zero,
     this.quality,
     this.linkType = true,
+    this.rtp,
   });
   final String id;
   final String label;
@@ -28,6 +32,10 @@ class LabVariant {
   final Duration preroll;
   final StreamQuality? quality;
   final bool linkType;
+
+  /// Not a player: HomeGuard reads the raw RTP itself ('recording' or
+  /// 'live' for comparison) and reports packets and keyframes.
+  final String? rtp;
 
   static const _sw = {'hwdec': 'no'};
   static const _clean = {'vd-lavc-o': 'flags=-output_corrupt', 'vd-lavc-show-all': 'no'};
@@ -45,6 +53,19 @@ class LabVariant {
   };
 
   static const all = [
+    LabVariant(
+      'R',
+      'R · RTP check',
+      'No player: HomeGuard reads the recording stream itself for 20 s and reports whether data and '
+          'keyframes arrive.',
+      rtp: 'recording',
+    ),
+    LabVariant(
+      'S',
+      'S · live RTP',
+      'The same check on this camera\'s live SD stream, for comparison.',
+      rtp: 'live',
+    ),
     LabVariant('A', 'A · now', 'What Recordings uses now: hardware decoder, damaged frames shown.'),
     LabVariant('B', 'B · SW', 'Software decoder (hwdec=no).', props: _sw),
     LabVariant(
@@ -125,6 +146,10 @@ class DecoderLabPage extends StatefulWidget {
 class _DecoderLabPageState extends State<DecoderLabPage> {
   int _index = 0;
   int _run = 0;
+
+  /// The NVR needs a moment to free the previous playback session.
+  bool _ready = false;
+  Timer? _gap;
   final _results = <String, _Result>{};
   final _openedAt = <String, DateTime>{};
 
@@ -135,7 +160,25 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
     super.initState();
     final r = widget.recording;
     Log.d('playback', 'lab opened: ${r.device.name} ${r.segment.start}–${r.segment.end} ${r.segment.type}');
-    _openedAt[LabVariant.all.first.id] = DateTime.now();
+    _startGap(LabVariant.all.first.id);
+  }
+
+  void _startGap(String id) {
+    _ready = false;
+    _gap?.cancel();
+    _gap = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() {
+        _ready = true;
+        _openedAt[id] = DateTime.now();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _gap?.cancel();
+    super.dispose();
   }
 
   _Result _resultFor(String id) => _results.putIfAbsent(id, _Result.new);
@@ -150,7 +193,7 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
       _index = i;
       _run++;
       _results[id] = _Result();
-      _openedAt[id] = DateTime.now();
+      _startGap(id);
     });
   }
 
@@ -257,6 +300,42 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
               child: Builder(
                 builder: (_) {
                   final key = '${v.id}#$_run';
+                  if (!_ready) {
+                    return const Center(
+                      child: Text(
+                        'Waiting 2 s for the NVR to free the previous stream…',
+                        style: TextStyle(color: Colors.white70),
+                      ),
+                    );
+                  }
+                  if (v.rtp != null) {
+                    final live = v.rtp == 'live';
+                    final path = live ? rec.route.streamPath(rec.device, StreamQuality.sub) : rec.path;
+                    final c = registry.streamCredentialsFor(rec.device.id, viaBridge: rec.route.bridge);
+                    return _RtpPanel(
+                      key: ValueKey(key),
+                      inspector: RtpInspector(
+                        uri: rec.route.rtspUri(path),
+                        username: c?.username ?? '',
+                        password: c?.password ?? '',
+                        tag: 'rtp:lab-${v.id}',
+                      ),
+                      onDone: (stats) {
+                        final res = _resultFor(v.id);
+                        res.status = stats == null
+                            ? 'failed'
+                            : stats.firstKeyframeMs != null
+                            ? 'keyframe'
+                            : stats.packets > 0
+                            ? 'no keyframe'
+                            : 'no data';
+                        res.firstKeyframeMs = stats?.firstKeyframeMs;
+                        res.firstFrameMs = stats?.firstPacketMs;
+                        res.events.add(stats?.summary(0) ?? 'failed');
+                        if (mounted) setState(() {});
+                      },
+                    );
+                  }
                   return RtspPlayerWidget(
                     key: ValueKey(key),
                     rtspUrl: url,
@@ -285,7 +364,7 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               'Status: ${res.status}\n'
-              'First picture: ${res.firstFrameMs == null ? '-' : '${res.firstFrameMs} ms'}\n'
+              '${v.rtp != null ? 'First RTP packet' : 'First picture'}: ${res.firstFrameMs == null ? '-' : '${res.firstFrameMs} ms'}\n'
               'First keyframe (I): ${res.firstKeyframeMs == null ? '-' : '${res.firstKeyframeMs} ms'}\n'
               'Frame types: ${res.types.isEmpty ? '-' : res.types}\n'
               'Start: ${DateFormat.Hms().format(rec.segment.start.subtract(v.preroll))}'
@@ -310,7 +389,78 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
     if (r == null) return null;
     if (r.firstKeyframeMs != null) return const Icon(Icons.check_circle, size: 18, color: Colors.green);
     if (r.firstFrameMs != null) return const Icon(Icons.timelapse, size: 18, color: AppColors.warning);
-    if (r.status == 'error') return const Icon(Icons.error_outline, size: 18, color: AppColors.danger);
+    if (r.status == 'error' || r.status == 'no data' || r.status == 'failed') {
+      return const Icon(Icons.error_outline, size: 18, color: AppColors.danger);
+    }
     return null;
+  }
+}
+
+/// Runs an [RtpInspector] while shown and lists what it reports.
+class _RtpPanel extends StatefulWidget {
+  const _RtpPanel({super.key, required this.inspector, required this.onDone});
+  final RtpInspector inspector;
+  final void Function(RtpStats? stats) onDone;
+
+  @override
+  State<_RtpPanel> createState() => _RtpPanelState();
+}
+
+class _RtpPanelState extends State<_RtpPanel> {
+  final _lines = <String>[];
+  bool _running = true;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.inspector
+        .run((l) {
+          if (mounted) setState(() => _lines.add(l));
+        })
+        .then((stats) {
+          if (!mounted) return;
+          setState(() => _running = false);
+          widget.onDone(stats);
+        });
+  }
+
+  @override
+  void dispose() {
+    widget.inspector.stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Newest first, without SDP noise once it is long.
+    final shown = _lines.reversed.where((l) => !l.startsWith('  sdp')).take(12).toList();
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (_running)
+                const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 8),
+              Text(_running ? 'Reading the stream…' : 'Done', style: const TextStyle(color: Colors.white)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: ListView(
+              children: [
+                for (final l in shown)
+                  Text(
+                    l,
+                    style: const TextStyle(color: Colors.white70, fontFamily: 'monospace', fontSize: 10),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
