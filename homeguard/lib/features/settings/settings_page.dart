@@ -49,6 +49,12 @@ class SettingsPage extends StatelessWidget {
             subtitle: const Text('What each device supports; shareable report'),
             onTap: () => context.push('/settings/diagnostics'),
           ),
+          ListTile(
+            leading: const Icon(Icons.receipt_long_outlined),
+            title: const Text('Logs'),
+            subtitle: const Text('Detailed camera and recording log to copy and send'),
+            onTap: () => context.push('/settings/logs'),
+          ),
           const _Header('Streaming'),
           SwitchListTile(
             title: const Text('HD video'),

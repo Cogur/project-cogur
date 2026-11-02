@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/security/secure_store.dart';
+import '../../core/utils/log.dart';
 
 /// User preferences (non-secret, but stored alongside secrets in the
 /// keystore so the app has a single, encrypted persistence layer).
@@ -13,6 +14,7 @@ class SettingsController extends ChangeNotifier {
   int _autoLockMinutes = 5;
   bool _confirmUnlockWithBiometrics = true;
   bool _preferHd = false;
+  bool _detailedLogs = true;
   bool _muteGridAudio = true;
   bool _allowScreenshots = false;
 
@@ -25,6 +27,10 @@ class SettingsController extends ChangeNotifier {
   /// Off (default): SD sub-stream everywhere: starts faster, fewer stalls.
   /// On: HD main stream. Fullscreen can still switch per view.
   bool get preferHd => _preferHd;
+
+  /// Keep video/playback/network debug lines for Settings → Logs (on by
+  /// default in these test builds).
+  bool get detailedLogs => _detailedLogs;
   bool get muteGridAudio => _muteGridAudio;
 
   /// Off by default: camera pictures stay out of screenshots, recordings and
@@ -47,6 +53,8 @@ class SettingsController extends ChangeNotifier {
     _autoLockMinutes = s['autoLockMinutes'] as int? ?? 5;
     _confirmUnlockWithBiometrics = s['confirmUnlock'] as bool? ?? true;
     _preferHd = s['hd'] as bool? ?? false;
+    _detailedLogs = s['logs'] as bool? ?? true;
+    Log.verbose = _detailedLogs;
     _muteGridAudio = s['muteGrid'] as bool? ?? true;
     _allowScreenshots = s['screenshots'] as bool? ?? false;
     notifyListeners();
@@ -57,12 +65,15 @@ class SettingsController extends ChangeNotifier {
     int? autoLockMinutes,
     bool? confirmUnlockWithBiometrics,
     bool? preferHd,
+    bool? detailedLogs,
     bool? muteGridAudio,
     bool? allowScreenshots,
   }) async {
     _autoLockMinutes = autoLockMinutes ?? _autoLockMinutes;
     _confirmUnlockWithBiometrics = confirmUnlockWithBiometrics ?? _confirmUnlockWithBiometrics;
     _preferHd = preferHd ?? _preferHd;
+    _detailedLogs = detailedLogs ?? _detailedLogs;
+    Log.verbose = _detailedLogs;
     _muteGridAudio = muteGridAudio ?? _muteGridAudio;
     final windowChanged = allowScreenshots != null && allowScreenshots != _allowScreenshots;
     _allowScreenshots = allowScreenshots ?? _allowScreenshots;
@@ -72,6 +83,7 @@ class SettingsController extends ChangeNotifier {
       'autoLockMinutes': _autoLockMinutes,
       'confirmUnlock': _confirmUnlockWithBiometrics,
       'hd': _preferHd,
+      'logs': _detailedLogs,
       'muteGrid': _muteGridAudio,
       'screenshots': _allowScreenshots,
     });

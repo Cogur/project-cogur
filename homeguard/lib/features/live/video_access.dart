@@ -7,6 +7,7 @@ import '../../core/network/device_http_client.dart';
 import '../../core/rtsp/rtsp_client.dart';
 import '../../core/security/secure_store.dart';
 import '../../core/tvt/tvt_lapi_client.dart';
+import '../../core/utils/log.dart';
 
 enum VideoAccess {
   /// RTSP accepts the account: play video.
@@ -45,11 +46,19 @@ class VideoAccessCheck {
     TvtLapiClient Function(Credentials c)? pictures,
     int channel = 1,
     void Function(DigestPassword form)? onForm,
-  }) => _results[key] ??= _run(rtspUri, plain, form, tryOtherForms, pictures, channel, onForm).then((r) {
-    // Network trouble is not a verdict: allow the next tile to try again.
-    if (r == null) _results.remove(key);
-    return r ?? VideoAccess.video;
-  });
+  }) => _results[key] ??= () {
+    final started = DateTime.now();
+    Log.d('access', 'check $key ${Log.redactUrl(rtspUri.toString())} form=${form.name}');
+    return _run(rtspUri, plain, form, tryOtherForms, pictures, channel, onForm).then((r) {
+      Log.d(
+        'access',
+        '$key → ${r?.name ?? 'network error'} in ${DateTime.now().difference(started).inMilliseconds} ms',
+      );
+      // Network trouble is not a verdict: allow the next tile to try again.
+      if (r == null) _results.remove(key);
+      return r ?? VideoAccess.video;
+    });
+  }();
 
   Future<VideoAccess?> _run(
     Uri uri,
@@ -72,8 +81,10 @@ class VideoAccessCheck {
         if (f != stored) onForm?.call(f);
         return VideoAccess.video;
       } on RtspException catch (e) {
+        Log.d('access', 'RTSP with ${f.name}: ${e.message} ${e.detail ?? ''}');
         if (!e.isAuthFailure) return VideoAccess.video; // let the player report it
-      } catch (_) {
+      } catch (e) {
+        Log.d('access', 'RTSP probe failed: $e');
         return null;
       }
     }

@@ -3,6 +3,7 @@ import 'package:intl/intl.dart' hide TextDirection;
 import 'package:provider/provider.dart';
 
 import '../../core/app_services.dart';
+import '../../core/utils/log.dart';
 import '../settings/settings_controller.dart';
 import '../../core/models/device.dart';
 import '../../core/services/device_registry.dart';
@@ -120,15 +121,23 @@ class _PlaybackPageState extends State<PlaybackPage> {
     }
   }
 
+  void _play(Recording r, String why) {
+    Log.d(
+      'playback',
+      '$why: ${r.device.name} ${r.segment.start}–${r.segment.end} ${r.segment.type} path ${r.path}',
+    );
+    setState(() => _playing = r);
+  }
+
   void _playAt(DateTime t) {
     final hit = _recs.where((r) => r.segment.contains(t)).firstOrNull;
     if (hit != null) {
-      setState(() => _playing = RecordingService.seek(hit, t));
+      _play(RecordingService.seek(hit, t), 'timeline tap');
       return;
     }
     // Nothing at that moment: jump to the next recording after it.
     final next = _recs.where((r) => r.segment.start.isAfter(t)).firstOrNull;
-    if (next != null) setState(() => _playing = next);
+    if (next != null) _play(next, 'timeline tap (next)');
   }
 
   @override
@@ -235,7 +244,7 @@ class _PlaybackPageState extends State<PlaybackPage> {
                     ),
                     selected: _playing?.segment.end == r.segment.end,
                     trailing: const Icon(Icons.play_circle_outline),
-                    onTap: () => setState(() => _playing = r),
+                    onTap: () => _play(r, 'list tap'),
                   ),
               ],
             ),

@@ -10,6 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
+import '../../core/utils/log.dart';
+
 /// Lookup for live players by tag, so FlutterFlow custom actions (snapshot,
 /// mute) can reach a player without passing non-primitive objects around.
 class RtspPlayerRegistry {
@@ -84,17 +86,21 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   /// Last warning/error from libmpv/ffmpeg: the real reason behind a generic
   /// "Stream error" (e.g. 401, unsupported codec), shown to the user.
   String? _lastLog;
+  DateTime _openedAt = DateTime.now();
+  bool _sawProgress = false;
+  String get _tag => 'video:${widget.playerTag ?? 'player'}';
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _player = Player(
-      configuration: const PlayerConfiguration(
+      configuration: PlayerConfiguration(
         bufferSize: 512 * 1024,
-        logLevel: MPVLogLevel.warn,
+        // Settings → Detailed logs: keep libmpv/ffmpeg's own messages too.
+        logLevel: Log.verbose ? MPVLogLevel.info : MPVLogLevel.warn,
         // Live player may only speak RTSP; no file/http/data access.
-        protocolWhitelist: ['rtsp', 'rtsps', 'rtp', 'udp', 'tcp', 'tls'],
+        protocolWhitelist: const ['rtsp', 'rtsps', 'rtp', 'udp', 'tcp', 'tls'],
       ),
     );
     _video = VideoController(
@@ -108,20 +114,37 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     _subs
       ..add(
         _player.stream.log.listen((l) {
-          if (l.level == 'error' || l.level == 'warn') {
-            _lastLog = _stripCredentials('${l.prefix}: ${l.text}'.trim());
+          final text = _stripCredentials('${l.prefix}: ${l.text}'.trim());
+          if (l.level == 'error' || l.level == 'warn') _lastLog = text;
+          Log.d('mpv:${widget.playerTag ?? 'player'}', '${l.level} $text');
+        }),
+      )
+      ..add(
+        _player.stream.error.listen((e) {
+          Log.d(_tag, 'player error: ${_stripCredentials(e)}');
+          _onFailure(_explain(e));
+        }),
+      )
+      ..add(
+        _player.stream.width.listen((w) {
+          if (w != null && w > 0) {
+            Log.d(_tag, 'video size ${w}x${_player.state.height} after ${_sinceOpen()}');
           }
         }),
       )
-      ..add(_player.stream.error.listen((e) => _onFailure(_explain(e))))
       ..add(
         _player.stream.buffering.listen((b) {
+          Log.d(_tag, 'buffering=$b (status ${_status.name}) at ${_sinceOpen()}');
           if (b && _status == RtspPlayerStatus.playing) _setStatus(RtspPlayerStatus.buffering);
         }),
       )
       ..add(
-        _player.stream.position.listen((_) {
+        _player.stream.position.listen((pos) {
           _lastProgress = DateTime.now();
+          if (!_sawProgress) {
+            _sawProgress = true;
+            Log.d(_tag, 'first progress (pos $pos) after ${_sinceOpen()}');
+          }
           if (_status != RtspPlayerStatus.playing) {
             _attempt = 0;
             _setStatus(RtspPlayerStatus.playing);
@@ -131,6 +154,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       ..add(
         _player.stream.completed.listen((done) {
           if (!done) return;
+          Log.d(_tag, 'completed after ${_sinceOpen()} (live=${widget.live})');
           if (!widget.live) {
             // A recording simply ends; replaying it in a loop looked like a
             // flickering picture.
@@ -178,6 +202,9 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     if (_disposed || _paused) return;
     _retryTimer?.cancel();
     _lastLog = null;
+    _openedAt = DateTime.now();
+    _sawProgress = false;
+    Log.d(_tag, 'open attempt ${_attempt + 1}, live=${widget.live}: ${_stripCredentials(widget.rtspUrl)}');
     _setStatus(RtspPlayerStatus.connecting);
     try {
       await _configureLowLatency();
@@ -190,10 +217,19 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     }
   }
 
+  String _sinceOpen() => '${DateTime.now().difference(_openedAt).inMilliseconds} ms';
+
   void _checkStall() {
     if (_status == RtspPlayerStatus.error || _status == RtspPlayerStatus.ended) return;
     final silent = DateTime.now().difference(_lastProgress);
-    if (silent > Duration(seconds: widget.stallTimeoutSeconds)) {
+    // Before the first picture the camera may still be waiting for its next
+    // keyframe (several seconds on H.265 "smart" codecs): give it longer
+    // than a mid-stream stall, or the tile reconnects in a loop.
+    final limit = _status == RtspPlayerStatus.connecting
+        ? max(widget.stallTimeoutSeconds, 20)
+        : widget.stallTimeoutSeconds;
+    if (silent > Duration(seconds: limit)) {
+      Log.d(_tag, 'watchdog: no progress for ${silent.inMilliseconds} ms in ${_status.name}');
       if (!widget.live && _status == RtspPlayerStatus.playing) {
         // The NVR keeps a playback session open after the clip's last frame:
         // that is its end, not a dropout to reconnect (which replayed it).
@@ -214,6 +250,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     _watchdog?.cancel();
     _attempt++;
     final delay = Duration(milliseconds: min(30000, 1000 * pow(2, _attempt - 1).toInt()));
+    Log.d(_tag, 'failure "$message" after ${_sinceOpen()}, retry in ${delay.inMilliseconds} ms');
     _setStatus(RtspPlayerStatus.error, message);
     _retryTimer?.cancel();
     // A refused login is not retried on its own: recorders count (and beep
@@ -261,6 +298,10 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   void _setStatus(RtspPlayerStatus s, [String? message]) {
     if (_disposed) return;
     if (s == _status && message == _message) return;
+    Log.d(
+      _tag,
+      'status ${_status.name} → ${s.name}${message == null ? '' : ' ($message)'} at ${_sinceOpen()}',
+    );
     setState(() {
       _status = s;
       _message = message;

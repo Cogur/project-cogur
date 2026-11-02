@@ -12,6 +12,7 @@ import 'features/live/live_grid_page.dart';
 import 'features/playback/playback_page.dart';
 import 'features/settings/device_edit_page.dart';
 import 'features/settings/diagnostics_page.dart';
+import 'features/settings/logs_page.dart';
 import 'features/settings/settings_page.dart';
 import 'features/shell/home_shell.dart';
 
@@ -78,6 +79,7 @@ GoRouter buildRouter(AuthController auth) {
                 path: '/settings',
                 builder: (_, _) => const SettingsPage(),
                 routes: [
+                  GoRoute(path: 'logs', parentNavigatorKey: _rootKey, builder: (_, _) => const LogsPage()),
                   GoRoute(
                     path: 'diagnostics',
                     parentNavigatorKey: _rootKey,

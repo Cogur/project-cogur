@@ -5,6 +5,7 @@ import '../network/device_http_client.dart';
 import '../security/secure_store.dart';
 import '../tvt/tvt_lapi_client.dart';
 import '../tvt/tvt_web_client.dart';
+import '../utils/log.dart';
 import 'device_registry.dart';
 
 /// One recorded piece of video and how to play it.
@@ -102,6 +103,10 @@ class RecordingService {
     final recorder = camera.parentId == null ? camera : _registry.byId(camera.parentId!) ?? camera;
     final route = await _connections.require(cameraId);
     final from = DateTime(day.year, day.month, day.day);
+    Log.d(
+      'playback',
+      'search ${camera.name} ch${camera.channel} $from via ${route.kind.name} q=${quality.name}',
+    );
     final to = from.add(const Duration(days: 1)).subtract(const Duration(seconds: 1));
 
     if (route.bridge) {
@@ -133,13 +138,21 @@ class RecordingService {
       // its per-channel calendar says first whether there is anything.
       try {
         final days = await lapi.recordDates(camera.channel, day.year, day.month);
-        if (!days.contains(from)) return const [];
+        Log.d('playback', 'calendar ch${camera.channel}: ${days.length} days this month');
+        if (!days.contains(from)) {
+          Log.d('playback', 'no recordings on $from per calendar');
+          return const [];
+        }
       } on DeviceHttpException {
         // No calendar on this firmware: just search.
       } on FormatException {
         // Same.
       }
       final segs = await lapi.searchByTime(camera.channel, from, to);
+      Log.d(
+        'playback',
+        'found ${segs.length} segments; first path ${segs.isEmpty ? '-' : playbackPath(camera, segs.first, quality: quality)}',
+      );
       return [
         for (final s in segs)
           Recording(
