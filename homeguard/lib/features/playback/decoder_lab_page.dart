@@ -78,6 +78,13 @@ class LabVariant {
       rtp: 'recording',
     ),
     LabVariant(
+      'RH',
+      'RH · RTP check HD',
+      'The RTP check on the main (HD) stream of the recording.',
+      rtp: 'recording',
+      quality: StreamQuality.main,
+    ),
+    LabVariant(
       'S',
       'S · live RTP',
       'The same check on this camera\'s live SD stream, for comparison.',
@@ -308,7 +315,7 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
   String _summary() {
     final r = widget.recording;
     final b = StringBuffer()
-      ..writeln('HomeGuard decoder lab v5 (R–R8 RTP checks, L–N paced), ${DateTime.now()}')
+      ..writeln('HomeGuard decoder lab v6 (R, RH, R2–R8 RTP checks with recorded time), ${DateTime.now()}')
       ..writeln(
         '${r.device.name} ch${r.device.channel} ${r.segment.start}–${r.segment.end} ${r.segment.type}',
       )

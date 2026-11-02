@@ -32,6 +32,11 @@ class RtpStats {
   int markers = 0;
   int logged = 0;
   int? ssrc;
+
+  /// Recording wall-clock time the NVR stamps on its playback packets
+  /// (ONVIF replay header extension 0xABAC, NTP format, UTC).
+  DateTime? firstNtp;
+  DateTime? lastNtp;
   int lastPacketMs = 0;
   bool stallLogged = false;
 
@@ -48,7 +53,8 @@ class RtpStats {
         'other channels $otherChannels, seq gaps $seqGaps, media time $span, '
         'first packet ${firstPacketMs ?? '-'} ms, first VPS/SPS/PPS ${firstParamSetMs ?? '-'} ms, '
         'first keyframe ${firstKeyframeMs ?? '-'} ms, keyframes $keyframes, distinct timestamps '
-        '${timestamps.length}, marker bits $markers, NAL types $nalCounts';
+        '${timestamps.length}, marker bits $markers, NAL types $nalCounts, '
+        'recorded time ${firstNtp?.toLocal() ?? '-'} .. ${lastNtp?.toLocal() ?? '-'}';
   }
 }
 
@@ -245,6 +251,15 @@ class RtpInspector {
     final marker = (b[1] & 0x80) != 0;
     if (marker) s.markers++;
     var off = 12 + 4 * cc;
+    if (ext && b.length >= off + 16 && b[off] == 0xab && b[off + 1] == 0xac) {
+      final v = ByteData.sublistView(b, off + 4);
+      final secs = v.getUint32(0) - 2208988800; // NTP epoch 1900 → Unix 1970
+      final frac = v.getUint32(4) / 4294967296;
+      final t = DateTime.fromMillisecondsSinceEpoch(((secs + frac) * 1000).round(), isUtc: true);
+      if (s.firstNtp == null) say('recorded time of first packet: ${t.toLocal()} (UTC $t)');
+      s.firstNtp ??= t;
+      s.lastNtp = t;
+    }
     if (ext && b.length >= off + 4) off += 4 + 4 * ((b[off + 2] << 8) | b[off + 3]);
     if (off >= b.length) return;
     final payload = Uint8List.sublistView(b, off);
