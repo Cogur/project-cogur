@@ -25,8 +25,9 @@ Future<ServerSocket> _server() async {
           body = 'v=0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H265/90000\r\na=control:track1\r\n';
           headers += 'Content-Type: application/sdp\r\nContent-Base: rtsp://127.0.0.1/x/\r\n';
         }
-        if (method == 'SETUP')
+        if (method == 'SETUP') {
           headers += 'Session: 42;timeout=60\r\nTransport: RTP/AVP/TCP;interleaved=0-1\r\n';
+        }
         if (method == 'PLAY') headers += 'Range: npt=0.000-\r\n';
         sock.add(latin1.encode('RTSP/1.0 200 OK\r\n${headers}Content-Length: ${body.length}\r\n\r\n$body'));
         if (method == 'PLAY') {
