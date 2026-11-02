@@ -31,6 +31,13 @@ class RtpStats {
   final timestamps = <int>{};
   int markers = 0;
   int logged = 0;
+  int? ssrc;
+  int lastPacketMs = 0;
+  bool stallLogged = false;
+
+  /// Seconds of video received (RTP timestamp span at 90 kHz).
+  double get mediaSeconds =>
+      firstTs == null || lastTs == null ? 0 : ((lastTs! - firstTs!) & 0xffffffff) / 90000;
 
   bool get hevc => codec.contains('265') || codec.contains('HEVC');
 
@@ -54,7 +61,14 @@ class RtpInspector {
     required this.password,
     this.listen = const Duration(seconds: 20),
     this.tag = 'rtp',
+    this.mode = RtpProbeMode.plain,
+    this.replayStart,
   });
+
+  final RtpProbeMode mode;
+
+  /// Wall-clock start of the recording, for ONVIF replay `Range: clock=`.
+  final DateTime? replayStart;
 
   /// Stream URI without credentials.
   final Uri uri;
@@ -109,7 +123,26 @@ class RtpInspector {
       final s = stats;
       client.onPacket = (p) => _onPacket(s, p, playStart.elapsedMilliseconds, say);
       playStart.start();
-      final play = await client.request('PLAY', url: base, headers: {'Range': 'npt=0.000-'});
+      String two(int v) => v.toString().padLeft(2, '0');
+      final t = (replayStart ?? DateTime.now()).toUtc();
+      final clock = '${t.year}${two(t.month)}${two(t.day)}T${two(t.hour)}${two(t.minute)}${two(t.second)}Z';
+      final headers = switch (mode) {
+        RtpProbeMode.noRange => <String, String>{},
+        RtpProbeMode.replayFast => {
+          'Require': 'onvif-replay',
+          'Range': 'clock=$clock-',
+          'Rate-Control': 'no',
+        },
+        RtpProbeMode.replayTimed => {
+          'Require': 'onvif-replay',
+          'Range': 'clock=$clock-',
+          'Rate-Control': 'yes',
+        },
+        RtpProbeMode.scale => {'Range': 'npt=0.000-', 'Scale': '1.0', 'Speed': '1.0'},
+        _ => {'Range': 'npt=0.000-'},
+      };
+      say('PLAY mode ${mode.name}, headers $headers');
+      final play = await client.request('PLAY', url: base, headers: headers);
       say(
         'PLAY ok in ${playStart.elapsedMilliseconds} ms, range ${play.header('range') ?? '-'}, '
         'rtp-info ${play.header('rtp-info') ?? '-'}, scale ${play.header('scale') ?? '-'}',
@@ -118,8 +151,29 @@ class RtpInspector {
         const Duration(seconds: 5),
         (_) => say(s.summary(playStart.elapsedMilliseconds)),
       );
+      // Some recorders pace playback on receiver feedback: answer with
+      // RTCP receiver reports, or keep the session alive with requests.
+      final feedback = Timer.periodic(const Duration(milliseconds: 500), (tm) {
+        final now = playStart.elapsedMilliseconds;
+        if (s.packets > 0 && !s.stallLogged && now - s.lastPacketMs > 1500) {
+          s.stallLogged = true;
+          say('data stopped: last packet at ${s.lastPacketMs} ms after ${s.packets} packets');
+        }
+        if (mode == RtpProbeMode.rtcp ||
+            mode == RtpProbeMode.replayFast ||
+            mode == RtpProbeMode.replayTimed) {
+          final rr = _receiverReport(s);
+          if (rr != null) client.sendInterleaved(1, rr);
+        }
+        if (mode == RtpProbeMode.keepAlive && tm.tick % 2 == 0) {
+          client
+              .request('GET_PARAMETER', url: base)
+              .then((_) {}, onError: (Object e) => say('GET_PARAMETER failed: $e'));
+        }
+      });
       await Future.any([Future<void>.delayed(listen), _stop.future]);
       ticker.cancel();
+      feedback.cancel();
       if (s.firstNals.length < 30) say('first NAL units: ${s.firstNals.join(' ')}');
       say('result ${s.summary(playStart.elapsedMilliseconds)}');
       if (s.packets == 0) {
@@ -158,11 +212,17 @@ class RtpInspector {
     }
     s.packets++;
     s.bytes += b.length;
+    s.lastPacketMs = ms;
+    if (s.stallLogged) {
+      s.stallLogged = false;
+      say('data resumed at $ms ms');
+    }
     if (b.length < 12 || (b[0] >> 6) != 2) return;
     final cc = b[0] & 0x0f;
     final ext = (b[0] & 0x10) != 0;
     final seq = (b[2] << 8) | b[3];
     final ts = ByteData.sublistView(b).getUint32(4);
+    s.ssrc ??= ByteData.sublistView(b).getUint32(8);
     if (s.lastSeq != null && seq != ((s.lastSeq! + 1) & 0xffff)) s.seqGaps++;
     s.lastSeq = seq;
     s.firstTs ??= ts;
@@ -186,6 +246,27 @@ class RtpInspector {
     for (final nal in nals) {
       _countNal(s, nal, ms, say);
     }
+  }
+
+  static const _ourSsrc = 0x48475244; // "HGRD"
+
+  /// RTCP receiver report (RFC 3550 §6.4.2) for the video source.
+  static Uint8List? _receiverReport(RtpStats s) {
+    final src = s.ssrc;
+    final seq = s.lastSeq;
+    if (src == null || seq == null) return null;
+    final b = ByteData(32)
+      ..setUint8(0, 0x81) // V=2, RC=1
+      ..setUint8(1, 201) // RR
+      ..setUint16(2, 7) // length in words - 1
+      ..setUint32(4, _ourSsrc)
+      ..setUint32(8, src)
+      ..setUint32(12, 0) // fraction lost, cumulative lost
+      ..setUint32(16, seq) // extended highest sequence
+      ..setUint32(20, 0) // jitter
+      ..setUint32(24, 0) // LSR
+      ..setUint32(28, 0); // DLSR
+    return b.buffer.asUint8List();
   }
 
   /// NAL unit types starting in this packet (aggregates opened, fragments
@@ -275,4 +356,29 @@ class RtpInspector {
 
   static String _hex(Uint8List b, int n) =>
       b.take(n).map((v) => v.toRadixString(16).padLeft(2, '0')).join(' ');
+}
+
+/// How the inspector asks for and keeps the stream going.
+enum RtpProbeMode {
+  /// PLAY with `Range: npt=0.000-`, no feedback.
+  plain,
+
+  /// Plain PLAY plus RTCP receiver reports every 0.5 s.
+  rtcp,
+
+  /// Plain PLAY plus GET_PARAMETER every second.
+  keepAlive,
+
+  /// ONVIF replay (the stream carries the ONVIF 0xABAC header extension):
+  /// `Require: onvif-replay`, `Range: clock=`, `Rate-Control: no`, RTCP.
+  replayFast,
+
+  /// The same with `Rate-Control: yes` (server paces).
+  replayTimed,
+
+  /// `Scale: 1.0` and `Speed: 1.0`.
+  scale,
+
+  /// PLAY without a Range header.
+  noRange,
 }

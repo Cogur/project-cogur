@@ -76,6 +76,13 @@ class RtspClient {
   /// Receives interleaved RTP/RTCP packets after PLAY (diagnostics).
   void Function(InterleavedPacket packet)? onPacket;
 
+  /// Sends a `$`-framed packet on an interleaved channel (e.g. RTCP).
+  void sendInterleaved(int channel, Uint8List data) {
+    final socket = _socket;
+    if (socket == null || _closed) return;
+    socket.add(Uint8List.fromList([0x24, channel, data.length >> 8, data.length & 0xff, ...data]));
+  }
+
   /// SETUP of one track over the RTSP connection; keeps the session id.
   Future<RtspResponse> setupInterleaved(String url, {int channel = 0}) async {
     final r = await request(

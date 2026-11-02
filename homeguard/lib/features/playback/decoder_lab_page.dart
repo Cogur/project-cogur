@@ -24,7 +24,10 @@ class LabVariant {
     this.quality,
     this.linkType = true,
     this.rtp,
+    this.rtpMode = RtpProbeMode.plain,
   });
+
+  final RtpProbeMode rtpMode;
   final String id;
   final String label;
   final String description;
@@ -74,6 +77,48 @@ class LabVariant {
       'S · live RTP',
       'The same check on this camera\'s live SD stream, for comparison.',
       rtp: 'live',
+    ),
+    LabVariant(
+      'R2',
+      'R2 · RTCP',
+      'RTP check that answers with RTCP receiver reports (some recorders wait for them).',
+      rtp: 'recording',
+      rtpMode: RtpProbeMode.rtcp,
+    ),
+    LabVariant(
+      'R3',
+      'R3 · ONVIF fast',
+      'RTP check as ONVIF replay (Require: onvif-replay, Range: clock=, Rate-Control: no).',
+      rtp: 'recording',
+      rtpMode: RtpProbeMode.replayFast,
+    ),
+    LabVariant(
+      'R4',
+      'R4 · ONVIF timed',
+      'RTP check as ONVIF replay with Rate-Control: yes.',
+      rtp: 'recording',
+      rtpMode: RtpProbeMode.replayTimed,
+    ),
+    LabVariant(
+      'R5',
+      'R5 · keep-alive',
+      'RTP check sending GET_PARAMETER every second.',
+      rtp: 'recording',
+      rtpMode: RtpProbeMode.keepAlive,
+    ),
+    LabVariant(
+      'R6',
+      'R6 · Scale 1',
+      'RTP check with Scale: 1.0 and Speed: 1.0 in PLAY.',
+      rtp: 'recording',
+      rtpMode: RtpProbeMode.scale,
+    ),
+    LabVariant(
+      'R7',
+      'R7 · no Range',
+      'RTP check with a PLAY without Range.',
+      rtp: 'recording',
+      rtpMode: RtpProbeMode.noRange,
     ),
     LabVariant('A', 'A · now', 'What Recordings uses now: hardware decoder, damaged frames shown.'),
     LabVariant('B', 'B · SW', 'Software decoder (hwdec=no).', props: _sw),
@@ -158,6 +203,9 @@ class _Result {
   int? firstKeyframeMs;
   final types = <String, int>{};
   String status = 'not run';
+
+  /// RTP checks: seconds of video that arrived (null for players).
+  double? mediaSeconds;
 }
 
 /// Recordings → decoder lab: plays one recording in several ways, one tab
@@ -248,7 +296,7 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
   String _summary() {
     final r = widget.recording;
     final b = StringBuffer()
-      ..writeln('HomeGuard decoder lab v3 (R/S RTP check, L–N paced), ${DateTime.now()}')
+      ..writeln('HomeGuard decoder lab v4 (R–R7 RTP checks, L–N paced), ${DateTime.now()}')
       ..writeln(
         '${r.device.name} ch${r.device.channel} ${r.segment.start}–${r.segment.end} ${r.segment.type}',
       )
@@ -347,17 +395,19 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
                         username: c?.username ?? '',
                         password: c?.password ?? '',
                         tag: 'rtp:lab-${v.id}',
+                        mode: v.rtpMode,
+                        replayStart: rec.segment.start,
                       ),
                       onDone: (stats) {
                         final res = _resultFor(v.id);
                         res.status = stats == null
                             ? 'failed'
-                            : stats.firstKeyframeMs != null
-                            ? 'keyframe'
-                            : stats.packets > 0
-                            ? 'no keyframe'
-                            : 'no data';
+                            : stats.packets == 0
+                            ? 'no data'
+                            : '${stats.firstKeyframeMs != null ? 'keyframe' : 'no keyframe'}, '
+                                  '${stats.mediaSeconds.toStringAsFixed(1)} s of video';
                         res.firstKeyframeMs = stats?.firstKeyframeMs;
+                        res.mediaSeconds = stats?.mediaSeconds;
                         res.firstFrameMs = stats?.firstPacketMs;
                         res.events.add(stats?.summary(0) ?? 'failed');
                         if (mounted) setState(() {});
@@ -415,6 +465,11 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
 
   Widget? _verdictIcon(_Result? r) {
     if (r == null) return null;
+    final media = r.mediaSeconds;
+    if (media != null) {
+      if (media >= 3) return const Icon(Icons.check_circle, size: 18, color: Colors.green);
+      if (r.firstFrameMs != null) return const Icon(Icons.timelapse, size: 18, color: AppColors.warning);
+    }
     if (r.firstKeyframeMs != null) return const Icon(Icons.check_circle, size: 18, color: Colors.green);
     if (r.firstFrameMs != null) return const Icon(Icons.timelapse, size: 18, color: AppColors.warning);
     if (r.status == 'error' || r.status == 'no data' || r.status == 'failed') {
