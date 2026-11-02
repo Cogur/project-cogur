@@ -4,6 +4,7 @@
 // Parameters are primitives so the widget can be dropped onto any FF page.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -88,6 +89,9 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   String? _lastLog;
   DateTime _openedAt = DateTime.now();
   bool _sawProgress = false;
+  Duration _lastPos = Duration.zero;
+
+  static final _benign = RegExp(r'cannot seek|force-seekable|property not found', caseSensitive: false);
   String get _tag => 'video:${widget.playerTag ?? 'player'}';
 
   @override
@@ -121,6 +125,12 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       )
       ..add(
         _player.stream.error.listen((e) {
+          if (_benign.hasMatch(e)) {
+            // libmpv reports these at "error" level but keeps playing;
+            // reconnecting on them made every tile flash off once.
+            Log.d(_tag, 'ignored player message: $e');
+            return;
+          }
           Log.d(_tag, 'player error: ${_stripCredentials(e)}');
           _onFailure(_explain(e));
         }),
@@ -129,6 +139,12 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
         _player.stream.width.listen((w) {
           if (w != null && w > 0) {
             Log.d(_tag, 'video size ${w}x${_player.state.height} after ${_sinceOpen()}');
+            // The first decoded picture is what counts as "playing".
+            _lastProgress = DateTime.now();
+            if (_status != RtspPlayerStatus.playing) {
+              _attempt = 0;
+              _setStatus(RtspPlayerStatus.playing);
+            }
           }
         }),
       )
@@ -140,12 +156,16 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       )
       ..add(
         _player.stream.position.listen((pos) {
+          // mpv reports position 0 right after open, before any picture:
+          // only a moving position is progress.
+          if (pos <= Duration.zero || pos == _lastPos) return;
+          _lastPos = pos;
           _lastProgress = DateTime.now();
           if (!_sawProgress) {
             _sawProgress = true;
             Log.d(_tag, 'first progress (pos $pos) after ${_sinceOpen()}');
           }
-          if (_status != RtspPlayerStatus.playing) {
+          if (_status != RtspPlayerStatus.playing && _player.state.width != null) {
             _attempt = 0;
             _setStatus(RtspPlayerStatus.playing);
           }
@@ -172,7 +192,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   Future<void> _configureLowLatency() async {
     final p = _player.platform;
     if (p is! NativePlayer) return;
-    const props = {
+    final props = {
       'rtsp-transport': 'tcp',
       'cache': 'no',
       'cache-pause': 'no',
@@ -184,11 +204,17 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       'interpolation': 'no',
       'network-timeout': '6',
       'untimed': 'yes',
-      // Joining a stream between keyframes otherwise shows a black picture
-      // with only the moving parts drawn in until the next keyframe (several
-      // seconds on H.265 cameras). Show nothing until a full frame decodes.
-      'vd-lavc-o': 'flags=-output_corrupt',
-      'vd-lavc-show-all': 'no',
+      // Android: go straight to the decoder mode that works with this
+      // renderer; plain "mediacodec" failed on every open first
+      // ("Both surface and native_window are NULL") and cost time.
+      if (Platform.isAndroid) 'hwdec': 'mediacodec-copy',
+      // Live: joining between keyframes otherwise shows a black picture with
+      // only the moving parts drawn in until the next keyframe. Show nothing
+      // until a full frame decodes (the tile shows a still meanwhile).
+      // Recordings keep partial frames: some NVR clips have no keyframe
+      // within their first seconds and would otherwise stay black.
+      if (widget.live) 'vd-lavc-o': 'flags=-output_corrupt',
+      if (widget.live) 'vd-lavc-show-all': 'no',
     };
     // Recordings use the same settings: buffered playback ("untimed" off)
     // waited forever on the NVR's playback timestamps and never showed a
@@ -204,6 +230,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     _lastLog = null;
     _openedAt = DateTime.now();
     _sawProgress = false;
+    _lastPos = Duration.zero;
     Log.d(_tag, 'open attempt ${_attempt + 1}, live=${widget.live}: ${_stripCredentials(widget.rtspUrl)}');
     _setStatus(RtspPlayerStatus.connecting);
     try {
