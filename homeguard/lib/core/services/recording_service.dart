@@ -56,19 +56,43 @@ class RecordingService {
     DeviceConfig camera,
     RecordSegment s, {
     StreamQuality quality = StreamQuality.main,
+    Duration preroll = Duration.zero,
+    bool linkType = true,
   }) {
     // Non-TVT stream paths (custom firmware, the simulator) have no known
     // playback form; show the camera's stream instead of failing.
     if (camera.rtspPathTemplate != DeviceConfig.tvtRtspTemplate) return camera.rtspPath(quality);
     String two(int v) => v.toString().padLeft(2, '0');
-    final t = s.start;
-    return tvtPlaybackTemplate
+    // [preroll] starts earlier so the stream reaches a keyframe before the
+    // wanted moment (the NVR starts playback wherever it is asked to).
+    final t = s.start.subtract(preroll);
+    final path = tvtPlaybackTemplate
         .replaceAll('{channel0}', '${camera.channel - 1}') // playback chID is 0-based
         .replaceAll('{channel}', '${camera.channel}')
         .replaceAll('{date}', '${t.year}-${two(t.month)}-${two(t.day)}')
         .replaceAll('{time}', '${two(t.hour)}:${two(t.minute)}:${two(t.second)}')
-        .replaceAll('{seconds}', '${s.length.inSeconds.clamp(1, 86400)}')
+        .replaceAll('{seconds}', '${(s.length + preroll).inSeconds.clamp(1, 86400)}')
         .replaceAll('{stream}', quality.name);
+    return linkType ? path : path.replaceAll('&linkType=tcp', '');
+  }
+
+  /// [r] with another stream form, for decoder experiments (Recordings →
+  /// decoder lab). Bridge routes have a single form.
+  static Recording variant(
+    Recording r, {
+    StreamQuality? quality,
+    Duration preroll = Duration.zero,
+    bool linkType = true,
+  }) {
+    if (r.route.bridge) return r;
+    final q = quality ?? r.quality;
+    return Recording(
+      segment: r.segment,
+      device: r.device,
+      path: playbackPath(r.device, r.segment, quality: q, preroll: preroll, linkType: linkType),
+      route: r.route,
+      quality: q,
+    );
   }
 
   /// The same recording, played from [start] (e.g. a tap on the timeline).

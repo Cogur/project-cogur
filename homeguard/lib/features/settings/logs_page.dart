@@ -19,7 +19,7 @@ class _LogsPageState extends State<LogsPage> {
   static const _filters = {
     'All': null,
     'Video': ['video:', 'mpv:', 'access'],
-    'Playback': ['playback', 'lapi', 'video:playback', 'mpv:playback'],
+    'Playback': ['playback', 'lapi', 'video:playback', 'mpv:playback', 'video:lab', 'mpv:lab'],
     'Network': ['net', 'http', 'rtsp', 'tvt', 'auth', 'setup'],
   };
   String _filter = 'All';

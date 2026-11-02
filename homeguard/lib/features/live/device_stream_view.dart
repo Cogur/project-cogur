@@ -9,6 +9,7 @@ import '../../core/network/connection_manager.dart';
 import '../../core/network/device_http_client.dart';
 import '../../core/services/device_registry.dart';
 import '../../core/tvt/tvt_lapi_client.dart';
+import '../../core/utils/log.dart';
 import '../../custom_code/widgets/rtsp_player_widget.dart';
 import '../../theme/app_theme.dart';
 import 'video_access.dart';
@@ -70,15 +71,31 @@ class _DeviceStreamViewState extends State<DeviceStreamView> {
     }
   }
 
+  ResolvedRoute? _current;
+
   void _onNetwork() {
-    // Cache was invalidated (network change) → resolve again.
-    if (_connections!.cached(widget.deviceId) == null) _resolve();
+    // Cache was invalidated (network change, app resumed). Re-check quietly
+    // and rebuild the player only if the route really changed; rebuilding
+    // on every check restarted all tiles with a black picture.
+    if (_connections!.cached(widget.deviceId) != null) return;
+    final before = _current;
+    _connections!.resolve(widget.deviceId).then((r) {
+      if (!mounted) return;
+      if (before != null && r.kind == before.kind && r.host == before.host && r.rtspPort == before.rtspPort) {
+        return;
+      }
+      Log.d(
+        'video:tile',
+        '${widget.deviceId}: route changed ${before?.kind.name}/${before?.host} → ${r.kind.name}/${r.host}',
+      );
+      _resolve();
+    });
   }
 
   void _resolve({bool force = false}) {
     setState(() {
       _playing = false;
-      _route = _connections!.resolve(widget.deviceId, force: force);
+      _route = _connections!.resolve(widget.deviceId, force: force).then((r) => _current = r);
     });
   }
 

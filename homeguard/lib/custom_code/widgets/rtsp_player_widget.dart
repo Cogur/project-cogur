@@ -49,6 +49,8 @@ class RtspPlayerWidget extends StatefulWidget {
     this.onStatusChanged,
     this.overlayBuilder,
     this.live = true,
+    this.extraProperties = const {},
+    this.onFrameType,
   });
 
   final double? width;
@@ -66,6 +68,12 @@ class RtspPlayerWidget extends StatefulWidget {
   /// Live camera (reconnects when the stream ends) or a recording (stops
   /// at its end instead of starting over).
   final bool live;
+
+  /// mpv properties applied after the defaults (decoder experiments).
+  final Map<String, String> extraProperties;
+
+  /// Picture type of each newly shown frame ("I", "P", "B"), sampled.
+  final void Function(String type, Duration sinceOpen)? onFrameType;
 
   @override
   State<RtspPlayerWidget> createState() => _RtspPlayerWidgetState();
@@ -139,6 +147,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
         _player.stream.width.listen((w) {
           if (w != null && w > 0) {
             Log.d(_tag, 'video size ${w}x${_player.state.height} after ${_sinceOpen()}');
+            _logDecoderInfo('first frame');
             // The first decoded picture is what counts as "playing".
             _lastProgress = DateTime.now();
             if (_status != RtspPlayerStatus.playing) {
@@ -219,9 +228,73 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     // Recordings use the same settings: buffered playback ("untimed" off)
     // waited forever on the NVR's playback timestamps and never showed a
     // picture. What differs for recordings is the end (see `completed`).
+    props.addAll(widget.extraProperties);
+    if (widget.extraProperties.isNotEmpty) Log.d(_tag, 'extra mpv properties ${widget.extraProperties}');
     for (final e in props.entries) {
       await p.setProperty(e.key, e.value);
     }
+  }
+
+  /// Which decoder mpv really used and how many frames it dropped: the
+  /// difference between a black and a working recording is often here.
+  Future<void> _logDecoderInfo(String when) async {
+    if (!Log.verbose) return;
+    final p = _player.platform;
+    if (p is! NativePlayer) return;
+    final out = <String>[];
+    for (final name in const [
+      'hwdec-current',
+      'video-codec',
+      'video-params/pixelformat',
+      'video-params/hw-pixelformat',
+      'container-fps',
+      'estimated-vf-fps',
+      'decoder-frame-drop-count',
+      'frame-drop-count',
+      'video-frame-info/picture-type',
+      'demuxer-cache-duration',
+    ]) {
+      try {
+        out.add('$name=${await p.getProperty(name)}');
+      } catch (_) {
+        out.add('$name=?');
+      }
+    }
+    if (!_disposed) Log.d(_tag, 'decoder $when: ${out.join(', ')}');
+  }
+
+  Timer? _frameProbe;
+  String? _lastFrameType;
+  int _frameTypeChanges = 0;
+
+  /// Samples the type of the displayed picture (I = full keyframe) so the
+  /// log shows when the first complete picture arrived.
+  void _startFrameProbe() {
+    _frameProbe?.cancel();
+    _lastFrameType = null;
+    _frameTypeChanges = 0;
+    if (!Log.verbose && widget.onFrameType == null) return;
+    final p = _player.platform;
+    if (p is! NativePlayer) return;
+    _frameProbe = Timer.periodic(const Duration(milliseconds: 150), (t) async {
+      if (_disposed) return t.cancel();
+      try {
+        final type = await p.getProperty('video-frame-info/picture-type');
+        if (type.isEmpty || type == _lastFrameType) return;
+        _lastFrameType = type;
+        final since = DateTime.now().difference(_openedAt);
+        // Log the first changes, then only keyframes.
+        if (_frameTypeChanges++ < 6 || type == 'I') {
+          Log.d(_tag, 'frame type $type at ${since.inMilliseconds} ms');
+        }
+        widget.onFrameType?.call(type, since);
+      } catch (_) {
+        // Property unavailable until the first frame.
+      }
+      final ticks = t.tick;
+      if (!widget.live && ticks % 33 == 0 && ticks <= 200) _logDecoderInfo('at ${_sinceOpen()}');
+      if (DateTime.now().difference(_openedAt) > const Duration(minutes: 2)) t.cancel();
+    });
   }
 
   Future<void> _open() async {
@@ -236,6 +309,9 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     try {
       await _configureLowLatency();
       await _player.open(Media(widget.rtspUrl), play: true);
+      // Disposed while opening: do not start a watchdog for a dead player.
+      if (_disposed) return;
+      _startFrameProbe();
       _lastProgress = DateTime.now();
       _watchdog?.cancel();
       _watchdog = Timer.periodic(const Duration(seconds: 2), (_) => _checkStall());
@@ -247,6 +323,10 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   String _sinceOpen() => '${DateTime.now().difference(_openedAt).inMilliseconds} ms';
 
   void _checkStall() {
+    if (_disposed) {
+      _watchdog?.cancel();
+      return;
+    }
     if (_status == RtspPlayerStatus.error || _status == RtspPlayerStatus.ended) return;
     final silent = DateTime.now().difference(_lastProgress);
     // Before the first picture the camera may still be waiting for its next
@@ -364,6 +444,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
     _watchdog?.cancel();
+    _frameProbe?.cancel();
     _retryTimer?.cancel();
     for (final s in _subs) {
       s.cancel();

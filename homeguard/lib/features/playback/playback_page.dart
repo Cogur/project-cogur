@@ -10,6 +10,7 @@ import '../../core/services/device_registry.dart';
 import '../../core/services/recording_service.dart';
 import '../../custom_code/widgets/rtsp_player_widget.dart';
 import '../../theme/app_theme.dart';
+import 'decoder_lab_page.dart';
 
 /// Recordings: pick a camera and a day, see the day on a 24 h timeline, tap
 /// anywhere on it to play from that moment.
@@ -129,6 +130,15 @@ class _PlaybackPageState extends State<PlaybackPage> {
     setState(() => _playing = r);
   }
 
+  /// Stops the player first: the NVR has only a few playback slots.
+  void _openLab(Recording r) {
+    setState(() => _playing = null);
+    Navigator.of(
+      context,
+      rootNavigator: true,
+    ).push(MaterialPageRoute<void>(builder: (_) => DecoderLabPage(recording: r)));
+  }
+
   void _playAt(DateTime t) {
     final hit = _recs.where((r) => r.segment.contains(t)).firstOrNull;
     if (hit != null) {
@@ -155,7 +165,11 @@ class _PlaybackPageState extends State<PlaybackPage> {
               padding: const EdgeInsets.only(bottom: 24),
               children: [
                 if (_playing != null)
-                  _Player(recording: _playing!, onClose: () => setState(() => _playing = null)),
+                  _Player(
+                    recording: _playing!,
+                    onClose: () => setState(() => _playing = null),
+                    onLab: () => _openLab(_playing!),
+                  ),
                 SizedBox(
                   height: 56,
                   child: ListView(
@@ -261,9 +275,10 @@ class _PlaybackPageState extends State<PlaybackPage> {
 }
 
 class _Player extends StatelessWidget {
-  const _Player({required this.recording, required this.onClose});
+  const _Player({required this.recording, required this.onClose, required this.onLab});
   final Recording recording;
   final VoidCallback onClose;
+  final VoidCallback onLab;
 
   @override
   Widget build(BuildContext context) {
@@ -294,7 +309,17 @@ class _Player extends StatelessWidget {
           title: Text(
             '${recording.device.name} · ${DateFormat.MMMd().add_Hms().format(recording.segment.start)}',
           ),
-          trailing: IconButton(tooltip: 'Close', onPressed: onClose, icon: const Icon(Icons.close)),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Decoder lab (try other ways to play this)',
+                onPressed: onLab,
+                icon: const Icon(Icons.science_outlined),
+              ),
+              IconButton(tooltip: 'Close', onPressed: onClose, icon: const Icon(Icons.close)),
+            ],
+          ),
         ),
       ],
     );

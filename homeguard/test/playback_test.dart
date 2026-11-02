@@ -109,6 +109,20 @@ void main() {
     );
   });
 
+  test('preroll starts earlier and keeps the end; linkType can be left out', () {
+    const cam = DeviceConfig(id: 'cam2', name: 'Cam', kind: DeviceKind.camera, parentId: 'nvr', channel: 2);
+    final s = RecordSegment(
+      channel: 2,
+      start: DateTime(2026, 10, 30, 0, 0, 5),
+      end: DateTime(2026, 10, 30, 0, 1, 5),
+    );
+    expect(
+      RecordingService.playbackPath(cam, s, quality: StreamQuality.sub, preroll: const Duration(seconds: 10)),
+      '/chID=2&date=2026-10-29&time=23:59:55&timelen=70&streamType=sub&action=playback&linkType=tcp',
+    );
+    expect(RecordingService.playbackPath(cam, s, linkType: false), endsWith('action=playback'));
+  });
+
   test('segments are found in any envelope (config/item form of the HTTP API guide)', () {
     final doc = XmlDocument.parse(
       '<config version="1.0" xmlns="http://www.ipc.com/ver10" status="success">'
