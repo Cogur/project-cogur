@@ -63,9 +63,13 @@ class RtpInspector {
     this.tag = 'rtp',
     this.mode = RtpProbeMode.plain,
     this.replayStart,
+    this.stopWhenIdle,
   });
 
   final RtpProbeMode mode;
+
+  /// Finish early once data has stopped for this long (chained checks).
+  final Duration? stopWhenIdle;
 
   /// Wall-clock start of the recording, for ONVIF replay `Range: clock=`.
   final DateTime? replayStart;
@@ -159,6 +163,8 @@ class RtpInspector {
           s.stallLogged = true;
           say('data stopped: last packet at ${s.lastPacketMs} ms after ${s.packets} packets');
         }
+        final idle = stopWhenIdle;
+        if (idle != null && s.packets > 0 && now - s.lastPacketMs > idle.inMilliseconds) stop();
         if (mode == RtpProbeMode.rtcp ||
             mode == RtpProbeMode.replayFast ||
             mode == RtpProbeMode.replayTimed) {
@@ -199,6 +205,14 @@ class RtpInspector {
   static void _onPacket(RtpStats s, InterleavedPacket p, int ms, void Function(String) say) {
     if (p.channel == 1) {
       s.rtcp++;
+      // RTCP types: 200 SR, 201 RR, 202 SDES, 203 BYE (the server ends).
+      final b = p.payload;
+      final types = <int>[];
+      for (var i = 0; i + 4 <= b.length && types.length < 6;) {
+        types.add(b[i + 1]);
+        i += 4 * (((b[i + 2] << 8) | b[i + 3]) + 1);
+      }
+      if (s.rtcp <= 2 || types.contains(203)) say('rtcp #${s.rtcp} at $ms ms types $types');
       return;
     }
     if (p.channel != 0) {

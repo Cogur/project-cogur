@@ -25,7 +25,12 @@ class LabVariant {
     this.linkType = true,
     this.rtp,
     this.rtpMode = RtpProbeMode.plain,
+    this.chain = false,
   });
+
+  /// RTP check that reopens the recording where the data stopped, to see
+  /// whether the rest of it can be fetched piece by piece.
+  final bool chain;
 
   final RtpProbeMode rtpMode;
   final String id;
@@ -119,6 +124,13 @@ class LabVariant {
       'RTP check with a PLAY without Range.',
       rtp: 'recording',
       rtpMode: RtpProbeMode.noRange,
+    ),
+    LabVariant(
+      'R8',
+      'R8 · continue',
+      'RTP check that reopens the recording where the data stopped, until its end.',
+      rtp: 'recording',
+      chain: true,
     ),
     LabVariant('A', 'A · now', 'What Recordings uses now: hardware decoder, damaged frames shown.'),
     LabVariant('B', 'B · SW', 'Software decoder (hwdec=no).', props: _sw),
@@ -296,7 +308,7 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
   String _summary() {
     final r = widget.recording;
     final b = StringBuffer()
-      ..writeln('HomeGuard decoder lab v4 (R–R7 RTP checks, L–N paced), ${DateTime.now()}')
+      ..writeln('HomeGuard decoder lab v5 (R–R8 RTP checks, L–N paced), ${DateTime.now()}')
       ..writeln(
         '${r.device.name} ch${r.device.channel} ${r.segment.start}–${r.segment.end} ${r.segment.type}',
       )
@@ -388,8 +400,18 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
                     final live = v.rtp == 'live';
                     final path = live ? rec.route.streamPath(rec.device, StreamQuality.sub) : rec.path;
                     final c = registry.streamCredentialsFor(rec.device.id, viaBridge: rec.route.bridge);
+                    RtpInspector at(Duration offset) => RtpInspector(
+                      uri: rec.route.rtspUri(RecordingService.seek(rec, rec.segment.start.add(offset)).path),
+                      username: c?.username ?? '',
+                      password: c?.password ?? '',
+                      tag: 'rtp:lab-${v.id}',
+                      stopWhenIdle: const Duration(seconds: 2),
+                      listen: rec.segment.length - offset + const Duration(seconds: 3),
+                    );
                     return _RtpPanel(
                       key: ValueKey(key),
+                      next: v.chain && !rec.route.bridge ? at : null,
+                      expected: rec.segment.length,
                       inspector: RtpInspector(
                         uri: rec.route.rtspUri(path),
                         username: c?.username ?? '',
@@ -398,7 +420,7 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
                         mode: v.rtpMode,
                         replayStart: rec.segment.start,
                       ),
-                      onDone: (stats) {
+                      onDone: (stats, total) {
                         final res = _resultFor(v.id);
                         res.status = stats == null
                             ? 'failed'
@@ -407,7 +429,8 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
                             : '${stats.firstKeyframeMs != null ? 'keyframe' : 'no keyframe'}, '
                                   '${stats.mediaSeconds.toStringAsFixed(1)} s of video';
                         res.firstKeyframeMs = stats?.firstKeyframeMs;
-                        res.mediaSeconds = stats?.mediaSeconds;
+                        res.mediaSeconds = total;
+                        if (v.chain) res.status = '$total s of video in pieces';
                         res.firstFrameMs = stats?.firstPacketMs;
                         res.events.add(stats?.summary(0) ?? 'failed');
                         if (mounted) setState(() {});
@@ -481,9 +504,21 @@ class _DecoderLabPageState extends State<DecoderLabPage> {
 
 /// Runs an [RtpInspector] while shown and lists what it reports.
 class _RtpPanel extends StatefulWidget {
-  const _RtpPanel({super.key, required this.inspector, required this.onDone});
+  const _RtpPanel({
+    super.key,
+    required this.inspector,
+    required this.onDone,
+    this.next,
+    this.expected = Duration.zero,
+  });
   final RtpInspector inspector;
-  final void Function(RtpStats? stats) onDone;
+
+  /// Last stats and seconds of video over all pieces.
+  final void Function(RtpStats? stats, double totalSeconds) onDone;
+
+  /// Opens the recording again from an offset (chained check).
+  final RtpInspector Function(Duration offset)? next;
+  final Duration expected;
 
   @override
   State<_RtpPanel> createState() => _RtpPanelState();
@@ -492,24 +527,47 @@ class _RtpPanel extends StatefulWidget {
 class _RtpPanelState extends State<_RtpPanel> {
   final _lines = <String>[];
   bool _running = true;
+  late RtpInspector _current = widget.inspector;
+  bool _disposed = false;
 
   @override
   void initState() {
     super.initState();
-    widget.inspector
-        .run((l) {
-          if (mounted) setState(() => _lines.add(l));
-        })
-        .then((stats) {
-          if (!mounted) return;
-          setState(() => _running = false);
-          widget.onDone(stats);
-        });
+    _runAll();
+  }
+
+  void _say(String l) {
+    if (mounted) setState(() => _lines.add(l));
+  }
+
+  Future<void> _runAll() async {
+    var offset = Duration.zero;
+    var total = 0.0;
+    RtpStats? last;
+    for (var hop = 0; hop < 10 && !_disposed; hop++) {
+      if (hop > 0) _say('--- piece ${hop + 1}: reopening at +${offset.inMilliseconds / 1000} s');
+      last = await _current.run(_say);
+      final got = last?.mediaSeconds ?? 0;
+      total += got;
+      final next = widget.next;
+      if (next == null || _disposed || last == null || last.packets == 0) break;
+      // Step past what arrived (at least 1 s, so a stuck spot is skipped).
+      offset += Duration(milliseconds: ((got < 1 ? 1 : got + 0.04) * 1000).round());
+      if (offset >= widget.expected - const Duration(milliseconds: 500)) break;
+      _current = next(offset);
+    }
+    if (!mounted) return;
+    if (widget.next != null) {
+      _say('total ${total.toStringAsFixed(1)} s of video of ${widget.expected.inSeconds} s');
+    }
+    setState(() => _running = false);
+    widget.onDone(last, double.parse(total.toStringAsFixed(1)));
   }
 
   @override
   void dispose() {
-    widget.inspector.stop();
+    _disposed = true;
+    _current.stop();
     super.dispose();
   }
 

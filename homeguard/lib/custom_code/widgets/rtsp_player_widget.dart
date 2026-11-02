@@ -51,6 +51,7 @@ class RtspPlayerWidget extends StatefulWidget {
     this.live = true,
     this.extraProperties = const {},
     this.onFrameType,
+    this.onEarlyEnd,
   });
 
   final double? width;
@@ -75,6 +76,11 @@ class RtspPlayerWidget extends StatefulWidget {
   /// Picture type of each newly shown frame ("I", "P", "B"), sampled.
   final void Function(String type, Duration sinceOpen)? onFrameType;
 
+  /// Recordings: the stream went quiet after playing for [played] (wall
+  /// clock from the first picture to the last progress). The NVR stops
+  /// some clips early; the page can reopen from where it stopped.
+  final void Function(Duration played)? onEarlyEnd;
+
   @override
   State<RtspPlayerWidget> createState() => _RtspPlayerWidgetState();
 }
@@ -96,6 +102,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
   /// "Stream error" (e.g. 401, unsupported codec), shown to the user.
   String? _lastLog;
   DateTime _openedAt = DateTime.now();
+  DateTime? _firstFrameAt;
   bool _sawProgress = false;
   Duration _lastPos = Duration.zero;
 
@@ -147,6 +154,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
         _player.stream.width.listen((w) {
           if (w != null && w > 0) {
             Log.d(_tag, 'video size ${w}x${_player.state.height} after ${_sinceOpen()}');
+            _firstFrameAt ??= DateTime.now();
             _logDecoderInfo('first frame');
             // The first decoded picture is what counts as "playing".
             _lastProgress = DateTime.now();
@@ -304,6 +312,7 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
     _retryTimer?.cancel();
     _lastLog = null;
     _openedAt = DateTime.now();
+    _firstFrameAt = null;
     _sawProgress = false;
     _lastPos = Duration.zero;
     Log.d(_tag, 'open attempt ${_attempt + 1}, live=${widget.live}: ${_stripCredentials(widget.rtspUrl)}');
@@ -339,11 +348,14 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
         : widget.stallTimeoutSeconds;
     if (silent > Duration(seconds: limit)) {
       Log.d(_tag, 'watchdog: no progress for ${silent.inMilliseconds} ms in ${_status.name}');
-      if (!widget.live && _status == RtspPlayerStatus.playing) {
+      if (!widget.live && (_status == RtspPlayerStatus.playing || _status == RtspPlayerStatus.buffering)) {
         // The NVR keeps a playback session open after the clip's last frame:
         // that is its end, not a dropout to reconnect (which replayed it).
         _watchdog?.cancel();
+        final played = _lastProgress.difference(_firstFrameAt ?? _lastProgress);
+        Log.d(_tag, 'recording went quiet after ${played.inMilliseconds} ms of picture');
         _setStatus(RtspPlayerStatus.ended, 'End of recording');
+        widget.onEarlyEnd?.call(played);
         return;
       }
       _onFailure(

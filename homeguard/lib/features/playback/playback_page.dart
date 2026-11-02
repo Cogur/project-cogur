@@ -122,7 +122,30 @@ class _PlaybackPageState extends State<PlaybackPage> {
     }
   }
 
+  /// Pieces opened for the current recording after the NVR stopped early.
+  int _hops = 0;
+
+  /// The NVR ends some playback sessions after a second or two although
+  /// the recording goes on (the RTP check shows the data simply stops).
+  /// Reopen from where it stopped until the recording's end.
+  void _continue(Recording r, Duration played) {
+    final length = r.segment.end.difference(r.segment.start);
+    final step = played < const Duration(milliseconds: 500) ? const Duration(seconds: 1) : played;
+    if (step + const Duration(milliseconds: 1500) >= length || _hops >= 20) {
+      Log.d('playback', 'recording finished (played ${played.inMilliseconds} ms of ${length.inSeconds} s)');
+      return;
+    }
+    _hops++;
+    final next = RecordingService.seek(r, r.segment.start.add(step));
+    Log.d(
+      'playback',
+      'NVR stopped after ${played.inMilliseconds} ms; piece $_hops from ${next.segment.start}',
+    );
+    if (mounted) setState(() => _playing = next);
+  }
+
   void _play(Recording r, String why) {
+    _hops = 0;
     Log.d(
       'playback',
       '$why: ${r.device.name} ${r.segment.start}–${r.segment.end} ${r.segment.type} path ${r.path}',
@@ -169,6 +192,7 @@ class _PlaybackPageState extends State<PlaybackPage> {
                     recording: _playing!,
                     onClose: () => setState(() => _playing = null),
                     onLab: () => _openLab(_playing!),
+                    onEarlyEnd: (played) => _continue(_playing!, played),
                   ),
                 SizedBox(
                   height: 56,
@@ -275,10 +299,16 @@ class _PlaybackPageState extends State<PlaybackPage> {
 }
 
 class _Player extends StatelessWidget {
-  const _Player({required this.recording, required this.onClose, required this.onLab});
+  const _Player({
+    required this.recording,
+    required this.onClose,
+    required this.onLab,
+    required this.onEarlyEnd,
+  });
   final Recording recording;
   final VoidCallback onClose;
   final VoidCallback onLab;
+  final void Function(Duration played) onEarlyEnd;
 
   @override
   Widget build(BuildContext context) {
@@ -298,8 +328,11 @@ class _Player extends StatelessWidget {
               rtspUrl: url,
               muted: false,
               playerTag: 'playback',
-              stallTimeoutSeconds: 15,
+              // Short: a quiet recording is the NVR stopping early, which
+              // is answered by reopening from that point.
+              stallTimeoutSeconds: 3,
               live: false,
+              onEarlyEnd: onEarlyEnd,
             ),
           ),
         ),
