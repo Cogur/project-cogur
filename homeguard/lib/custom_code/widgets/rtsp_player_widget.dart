@@ -249,6 +249,8 @@ class _RtspPlayerWidgetState extends State<RtspPlayerWidget> with WidgetsBinding
       'video-params/hw-pixelformat',
       'container-fps',
       'estimated-vf-fps',
+      'estimated-frame-number',
+      'video-pts',
       'decoder-frame-drop-count',
       'frame-drop-count',
       'video-frame-info/picture-type',

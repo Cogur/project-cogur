@@ -26,6 +26,12 @@ class RtpStats {
   final nalCounts = <String, int>{};
   final firstNals = <String>[];
 
+  /// Distinct RTP timestamps (frames) and packets with the marker bit
+  /// (frame ends): constant timestamps leave players without timing.
+  final timestamps = <int>{};
+  int markers = 0;
+  int logged = 0;
+
   bool get hevc => codec.contains('265') || codec.contains('HEVC');
 
   String summary(int atMs) {
@@ -34,7 +40,8 @@ class RtpStats {
     return 'at $atMs ms: $packets RTP packets, $bytes bytes (~$kbps kbit/s), rtcp $rtcp, '
         'other channels $otherChannels, seq gaps $seqGaps, media time $span, '
         'first packet ${firstPacketMs ?? '-'} ms, first VPS/SPS/PPS ${firstParamSetMs ?? '-'} ms, '
-        'first keyframe ${firstKeyframeMs ?? '-'} ms, keyframes $keyframes, NAL types $nalCounts';
+        'first keyframe ${firstKeyframeMs ?? '-'} ms, keyframes $keyframes, distinct timestamps '
+        '${timestamps.length}, marker bits $markers, NAL types $nalCounts';
   }
 }
 
@@ -160,11 +167,23 @@ class RtpInspector {
     s.lastSeq = seq;
     s.firstTs ??= ts;
     s.lastTs = ts;
+    if (s.timestamps.length < 100000) s.timestamps.add(ts);
+    final marker = (b[1] & 0x80) != 0;
+    if (marker) s.markers++;
     var off = 12 + 4 * cc;
     if (ext && b.length >= off + 4) off += 4 + 4 * ((b[off + 2] << 8) | b[off + 3]);
     if (off >= b.length) return;
     final payload = Uint8List.sublistView(b, off);
-    for (final nal in s.hevc ? _hevcNals(payload) : _avcNals(payload)) {
+    final nals = s.hevc ? _hevcNals(payload) : _avcNals(payload);
+    if (s.logged < 15) {
+      s.logged++;
+      final names = nals.map((t) => s.hevc ? _hevcName(t) : _avcName(t)).join('+');
+      say(
+        'pkt seq=$seq ts=$ts (+${((ts - s.firstTs!) & 0xffffffff) / 90} ms) marker=$marker pt=${b[1] & 0x7f} '
+        'len=${b.length} nal=${names.isEmpty ? 'cont' : names} payload ${_hex(payload, 4)} at $ms ms',
+      );
+    }
+    for (final nal in nals) {
       _countNal(s, nal, ms, say);
     }
   }
