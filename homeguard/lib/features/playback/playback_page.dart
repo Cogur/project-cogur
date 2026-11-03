@@ -125,12 +125,19 @@ class _PlaybackPageState extends State<PlaybackPage> {
   /// Pieces opened for the current recording after the NVR stopped early.
   int _hops = 0;
 
+  /// Short pieces in a row: the NVR stops at a gap in the recording (the
+  /// SuperLive Plus timeline jumps over it too); each short piece jumps
+  /// further (1, 2, 4, 8 s).
+  int _shortPieces = 0;
+
   /// The NVR ends some playback sessions after a second or two although
   /// the recording goes on (the RTP check shows the data simply stops).
   /// Reopen from where it stopped until the recording's end.
   void _continue(Recording r, Duration played) {
     final length = r.segment.end.difference(r.segment.start);
-    final step = played < const Duration(milliseconds: 500) ? const Duration(seconds: 1) : played;
+    _shortPieces = played < const Duration(milliseconds: 1500) ? _shortPieces + 1 : 0;
+    final jump = _shortPieces == 0 ? Duration.zero : Duration(seconds: 1 << (_shortPieces - 1).clamp(0, 3));
+    final step = played + jump;
     if (step + const Duration(milliseconds: 1500) >= length || _hops >= 20) {
       Log.d('playback', 'recording finished (played ${played.inMilliseconds} ms of ${length.inSeconds} s)');
       return;
@@ -146,6 +153,7 @@ class _PlaybackPageState extends State<PlaybackPage> {
 
   void _play(Recording r, String why) {
     _hops = 0;
+    _shortPieces = 0;
     Log.d(
       'playback',
       '$why: ${r.device.name} ${r.segment.start}–${r.segment.end} ${r.segment.type} path ${r.path}',

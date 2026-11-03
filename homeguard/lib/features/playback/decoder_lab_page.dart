@@ -550,6 +550,7 @@ class _RtpPanelState extends State<_RtpPanel> {
   Future<void> _runAll() async {
     var offset = Duration.zero;
     var total = 0.0;
+    var short = 0;
     RtpStats? last;
     for (var hop = 0; hop < 10 && !_disposed; hop++) {
       if (hop > 0) _say('--- piece ${hop + 1}: reopening at +${offset.inMilliseconds / 1000} s');
@@ -558,8 +559,11 @@ class _RtpPanelState extends State<_RtpPanel> {
       total += got;
       final next = widget.next;
       if (next == null || _disposed || last == null || last.packets == 0) break;
-      // Step past what arrived (at least 1 s, so a stuck spot is skipped).
-      offset += Duration(milliseconds: ((got < 1 ? 1 : got + 0.04) * 1000).round());
+      // Step past what arrived; after short pieces jump over the gap that
+      // stops the NVR (1, 2, 4, 8 s), as the SuperLive Plus timeline does.
+      short = got < 1.5 ? short + 1 : 0;
+      final jump = short == 0 ? 0 : 1 << (short - 1).clamp(0, 3);
+      offset += Duration(milliseconds: ((got + jump + 0.04) * 1000).round());
       if (offset >= widget.expected - const Duration(milliseconds: 500)) break;
       _current = next(offset);
     }
